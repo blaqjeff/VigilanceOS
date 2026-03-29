@@ -108,7 +108,7 @@ Nosana provides a hosted **Qwen3.5-27B-AWQ-4bit** endpoint for challenge partici
 
 ```env
 OPENAI_API_KEY=nosana
-OPENAI_API_URL=https://3gsrmj6gchzyws9bnc835apd4fh6t5tyeppmbxmzrzhn.node.k8s.prd.nos.ci/v1
+OPENAI_API_URL=https://6vq2bcqphcansrs9b88ztxfs88oqy7etah2ugudytv2x.node.k8s.prd.nos.ci/v1
 MODEL_NAME=Qwen3.5-27B-AWQ-4bit
 ```
 
@@ -249,7 +249,7 @@ Edit `nos_job_def/nosana_eliza_job_definition.json` and update the Docker image 
         "ports": ["3000:3000"],
         "env": {
           "OPENAI_API_KEY": "nosana",
-          "OPENAI_API_URL": "https://3gsrmj6gchzyws9bnc835apd4fh6t5tyeppmbxmzrzhn.node.k8s.prd.nos.ci/v1",
+          "OPENAI_API_URL": "https://6vq2bcqphcansrs9b88ztxfs88oqy7etah2ugudytv2x.node.k8s.prd.nos.ci/v1",
           "MODEL_NAME": "Qwen3.5-27B-AWQ-4bit"
         }
       }
