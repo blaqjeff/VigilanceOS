@@ -1,0 +1,18 @@
+nosana:
+  job:
+    name: "vigilance-os-pipeline"
+    group: "run"
+  container:
+    image: "nosana-eliza-agent:latest"
+    env:
+      MODEL_NAME: "qwen3.5-27b"
+      OPENAI_API_URL: "nosana-local-inference-endpoint"
+      OPENAI_API_KEY: "nosana"
+      TELEGRAM_BOT_TOKEN: "%%SECRETS.TELEGRAM_BOT_TOKEN%%"
+      NODE_ENV: "production"
+    expose: 3000
+    command: ["npm", "run", "start"]
+  compute:
+    gpu: true
+    ram: 32GB
+    vram: 24GB # Enough for Qwen3.5-27B-AWQ-4bit

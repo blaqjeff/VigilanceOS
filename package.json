@@ -4,14 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "elizaos start --character ./characters/agent.character.json",
-    "dev": "elizaos dev --character ./characters/agent.character.json"
+    "start:eliza": "elizaos start --character ./characters/scout.character.json --character ./characters/auditor.character.json --character ./characters/reviewer.character.json",
+    "dev:eliza": "elizaos dev --character ./characters/scout.character.json --character ./characters/auditor.character.json --character ./characters/reviewer.character.json",
+    "dev:ui": "npm run dev --prefix ui",
+    "dev": "concurrently \"npm run dev:eliza\" \"npm run dev:ui\"",
+    "start": "concurrently \"npm run start:eliza\" \"npm run start --prefix ui\"",
+    "build:ui": "npm run build --prefix ui",
+    "build": "npm run build:ui"
   },
   "dependencies": {
     "@elizaos/core": "^1.0.0",
     "@elizaos/plugin-anthropic": "^1.5.12",
     "@elizaos/plugin-bootstrap": "^1.0.0",
-    "@elizaos/plugin-openai": "^1.0.0"
+    "@elizaos/plugin-mcp": "^1.8.2",
+    "@elizaos/plugin-openai": "^1.0.0",
+    "@elizaos/plugin-telegram": "^1.6.4",
+    "concurrently": "^8.2.2"
   },
   "devDependencies": {
     "@elizaos/cli": "^1.0.0",
