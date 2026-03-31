@@ -1,12 +1,31 @@
 'use client';
 
-import React from 'react';
+import React from "react";
 
 type Target = {
   targetId: string;
   type: string;
   displayName: string;
   url?: string;
+};
+
+type ReadinessIntegration = {
+  key: string;
+  label: string;
+  feature: string;
+  state: string;
+  available: boolean;
+  summary: string;
+  details: string[];
+  action?: string;
+  checkedAt: string;
+};
+
+type ReadinessSnapshot = {
+  checkedAt: string;
+  overallState: "ready" | "degraded";
+  summary: string;
+  integrations: Record<string, ReadinessIntegration>;
 };
 
 function extractText(mem: any): string {
@@ -21,9 +40,22 @@ function extractTarget(mem: any): Target | null {
   const t = mem?.content?.target;
   if (t?.targetId) return t as Target;
   const txt = extractText(mem);
-  const m = txt.match(/TARGET_ID:([^\s]+)/);
-  if (!m) return null;
-  return { targetId: m[1], type: "unknown", displayName: m[1] };
+  const match = txt.match(/TARGET_ID:([^\s]+)/);
+  if (!match) return null;
+  return { targetId: match[1], type: "unknown", displayName: match[1] };
+}
+
+function readinessTone(state?: string): string {
+  switch (state) {
+    case "ready":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "disabled":
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+    case "blocked":
+      return "border-red-500/30 bg-red-500/10 text-red-300";
+    default:
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  }
 }
 
 export default function Home() {
@@ -32,20 +64,30 @@ export default function Home() {
   const [scoutItems, setScoutItems] = React.useState<any[]>([]);
   const [hitlItems, setHitlItems] = React.useState<any[]>([]);
   const [findings, setFindings] = React.useState<any[]>([]);
+  const [readiness, setReadiness] = React.useState<ReadinessSnapshot | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
   const roomId = "00000000-0000-0000-0000-000000000000";
 
   const refresh = React.useCallback(async () => {
-    const [feedRes, findingsRes] = await Promise.all([
-      fetch(`/api/vigilance/feed?roomId=${encodeURIComponent(roomId)}`),
-      fetch(`/api/vigilance/findings?roomId=${encodeURIComponent(roomId)}`),
-    ]);
+    try {
+      const [feedRes, findingsRes, readinessRes] = await Promise.all([
+        fetch(`/api/vigilance/feed?roomId=${encodeURIComponent(roomId)}`),
+        fetch(`/api/vigilance/findings?roomId=${encodeURIComponent(roomId)}`),
+        fetch("/api/vigilance/readiness"),
+      ]);
 
-    const feedJson = await feedRes.json().catch(() => null);
-    const findingsJson = await findingsRes.json().catch(() => null);
+      const feedJson = await feedRes.json().catch(() => null);
+      const findingsJson = await findingsRes.json().catch(() => null);
+      const readinessJson = await readinessRes.json().catch(() => null);
 
-    setScoutItems(feedJson?.data?.scouts ?? []);
-    setHitlItems(feedJson?.data?.hitl ?? []);
-    setFindings(findingsJson?.data?.findings ?? []);
+      setScoutItems(feedJson?.data?.scouts ?? []);
+      setHitlItems(feedJson?.data?.hitl ?? []);
+      setFindings(findingsJson?.data?.findings ?? []);
+      setReadiness(readinessJson?.data ?? null);
+      setActionError(null);
+    } catch {
+      setActionError("Operator console could not refresh backend state.");
+    }
   }, []);
 
   React.useEffect(() => {
@@ -56,13 +98,19 @@ export default function Home() {
 
   async function submitTarget() {
     setBusy(true);
+    setActionError(null);
     try {
       const res = await fetch("/api/vigilance/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target, roomId }),
       });
-      await res.json().catch(() => null);
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(payload?.error ?? "Target submission failed.");
+      } else {
+        setTarget("");
+      }
       await refresh();
     } finally {
       setBusy(false);
@@ -71,189 +119,271 @@ export default function Home() {
 
   async function approveAndRunAudit(t: Target) {
     setBusy(true);
+    setActionError(null);
     try {
-      await fetch("/api/vigilance/approve", {
+      const approveRes = await fetch("/api/vigilance/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetId: t.targetId, targetDisplayName: t.displayName, roomId }),
       });
-      await fetch("/api/vigilance/audit", {
+      const approveJson = await approveRes.json().catch(() => null);
+      if (!approveRes.ok) {
+        setActionError(approveJson?.error ?? "Approval failed.");
+        await refresh();
+        return;
+      }
+
+      const auditRes = await fetch("/api/vigilance/audit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetId: t.targetId, roomId }),
       });
+      const auditJson = await auditRes.json().catch(() => null);
+      if (!auditRes.ok) {
+        setActionError(
+          auditJson?.readiness?.summary ??
+            auditJson?.error ??
+            "Audit could not start."
+        );
+      }
+
       await refresh();
     } finally {
       setBusy(false);
     }
   }
 
+  const readinessItems = readiness ? Object.values(readiness.integrations) : [];
+  const modelReadiness = readiness?.integrations?.model;
+  const headerReady = readiness?.overallState === "ready";
+  const headerTone = headerReady
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+    : "border-amber-500/30 bg-amber-500/10 text-amber-300";
+
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 font-sans selection:bg-cyan-500 selection:text-white">
-      {/* Dynamic Header */}
-      <header className="sticky top-0 z-50 backdrop-blur-md bg-gray-950/80 border-b border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_35%),linear-gradient(180deg,#020617_0%,#020617_45%,#111827_100%)] text-gray-100 font-sans selection:bg-cyan-500 selection:text-white">
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/85 backdrop-blur-md">
+        <div className="mx-auto flex h-18 max-w-7xl items-center justify-between gap-6 px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-gradient-to-tr from-cyan-500 to-blue-600 animate-pulse" />
-            <h1 className="text-xl font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-              VIGILANCE
-            </h1>
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-400/30 bg-cyan-400/10 shadow-[0_0_32px_rgba(34,211,238,0.2)]">
+              <div className="h-4 w-4 rounded-full bg-cyan-400" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold tracking-[0.25em] text-cyan-100">VIGILANCE</h1>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Operator Console</p>
+            </div>
           </div>
-          <div className="flex space-x-6">
-            <span className="text-sm font-medium text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer">Live Feed</span>
-            <span className="text-sm font-medium text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer">Findings</span>
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-              </span>
-              <span className="text-sm text-green-500 font-mono">Nosana GPU Active</span>
+
+          <div className="flex items-center gap-3">
+            <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${headerTone}`}>
+              {readiness ? readiness.overallState : "checking"}
+            </div>
+            <div className="hidden text-right md:block">
+              <p className="text-sm text-slate-200">
+                {readiness?.summary ?? "Checking backend integration readiness..."}
+              </p>
+              <p className="text-xs text-slate-500">
+                {readiness?.checkedAt
+                  ? `Last check ${new Date(readiness.checkedAt).toLocaleTimeString()}`
+                  : "Waiting for first readiness snapshot"}
+              </p>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Sub-Header / Demo Config */}
-        <section className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl backdrop-blur-sm relative overflow-hidden group hover:border-cyan-500/30 transition-all duration-500">
-           <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-           <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-4">
-              <div>
-                 <h2 className="text-lg font-semibold text-white">Target Assignment Command</h2>
-                 <p className="text-sm text-gray-400 mt-1">Provide a repository or Immunefi project URL for the Scout agent.</p>
-              </div>
-              <div className="flex gap-2 w-full md:w-auto">
-                 <input 
-                   type="text" 
-                   value={target}
-                   onChange={(e) => setTarget(e.target.value)}
-                   className="w-full md:w-80 px-4 py-2 rounded-lg bg-gray-950 border border-gray-700 text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all" 
-                   placeholder="e.g. github.com/traderjoe-xyz/contracts..."
-                 />
-                 <button
-                   disabled={busy || !target.trim()}
-                   onClick={() => void submitTarget()}
-                   className="px-6 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 disabled:hover:bg-cyan-600 text-white font-medium text-sm transition-colors shadow-[0_0_15px_rgba(8,145,178,0.4)]"
-                 >
-                    {busy ? "Working..." : "Deploy Scout"}
-                 </button>
-              </div>
-           </div>
+      <main className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+        <section className="relative overflow-hidden rounded-3xl border border-cyan-400/15 bg-slate-900/70 p-6 shadow-2xl shadow-cyan-950/20">
+          <div className="absolute inset-y-0 right-0 w-72 bg-[radial-gradient(circle_at_center,_rgba(34,211,238,0.18),_transparent_65%)]" />
+          <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl">
+              <p className="text-xs uppercase tracking-[0.35em] text-cyan-300">Golden Path Intake</p>
+              <h2 className="mt-3 text-2xl font-semibold text-white">Submit a target, gate it, and only audit when the stack is truly ready.</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-400">
+                Manual GitHub and Immunefi-style targets stay available through the UI. Live Scout discovery, Telegram approvals,
+                and model-backed auditing now reflect real backend readiness instead of static badges.
+              </p>
+            </div>
+
+            <div className="flex w-full flex-col gap-3 lg:max-w-xl lg:flex-row">
+              <input
+                type="text"
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50"
+                placeholder="github.com/org/repo or Immunefi project identifier"
+              />
+              <button
+                disabled={busy || !target.trim()}
+                onClick={() => void submitTarget()}
+                className="rounded-2xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy ? "Working..." : "Queue Target"}
+              </button>
+            </div>
+          </div>
         </section>
 
-        {/* Scout Feed & Filters */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-           
-           {/* Filters Sidebar */}
-           <div className="space-y-6">
-              <div className="bg-gray-900 p-6 rounded-2xl border border-gray-800">
-                 <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-widest mb-4">Target Filters</h3>
-                 <div className="space-y-3">
-                    {['Smart Contracts', 'Blockchain / DLT', 'Websites & Apps'].map((cat, i) => (
-                      <label key={i} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-800 cursor-pointer transition-colors border border-transparent hover:border-gray-700">
-                         <input type="checkbox" defaultChecked={i < 2} className="w-4 h-4 rounded border-gray-600 text-cyan-500 focus:ring-cyan-500 bg-gray-950" />
-                         <span className="text-sm text-gray-300">{cat}</span>
-                      </label>
+        {actionError ? (
+          <section className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            {actionError}
+          </section>
+        ) : null}
+
+        <section className="grid gap-4 lg:grid-cols-3">
+          {readinessItems.length > 0 ? (
+            readinessItems.map((integration) => (
+              <article
+                key={integration.key}
+                className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-500">{integration.feature}</p>
+                    <h3 className="mt-2 text-lg font-semibold text-white">{integration.label}</h3>
+                  </div>
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${readinessTone(integration.state)}`}>
+                    {integration.state}
+                  </span>
+                </div>
+
+                <p className="mt-4 text-sm leading-6 text-slate-300">{integration.summary}</p>
+
+                {integration.details?.length ? (
+                  <div className="mt-4 space-y-2 text-xs text-slate-500">
+                    {integration.details.map((detail, index) => (
+                      <p key={`${integration.key}-${index}`}>{detail}</p>
                     ))}
-                 </div>
-              </div>
-           </div>
-
-           {/* Live Feed */}
-           <div className="lg:col-span-2 space-y-4">
-              <div className="flex items-center justify-between mb-2">
-                 <h2 className="text-xl font-bold flex items-center gap-2">
-                    <svg className="w-5 h-5 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                    Scout Feed
-                 </h2>
-              </div>
-              
-              {(scoutItems || []).slice(0, 10).map((mem, idx) => {
-                const t = extractTarget(mem);
-                const text = extractText(mem);
-                const hitlForTarget = (hitlItems || []).find((h) => extractText(h).includes(t?.targetId ? `TARGET_ID:${t.targetId}` : "__none__"));
-                const hitlText = hitlForTarget ? extractText(hitlForTarget) : "";
-                const status = hitlText.includes("APPROVED") ? "Approved" : hitlText.includes("PENDING") ? "Awaiting Human Approval" : "New";
-
-                return (
-                  <div key={idx} className="p-5 rounded-2xl bg-gray-900/50 border border-gray-800 hover:bg-gray-900 transition-colors group">
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center gap-3">
-                        <span className="px-2.5 py-1 rounded bg-blue-500/10 text-blue-400 text-xs font-mono border border-blue-500/20">
-                          {t?.type ?? "Target"}
-                        </span>
-                        <h4 className="font-semibold text-gray-200">{t?.displayName ?? "Target"}</h4>
-                      </div>
-                      <span className="text-xs font-mono text-gray-500">{extractStage(mem) ?? "scout"}</span>
-                    </div>
-                    <p className="text-sm text-gray-400 leading-relaxed mb-4 whitespace-pre-wrap">
-                      {text}
-                    </p>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs text-yellow-500 bg-yellow-500/10 px-2 py-1 rounded flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" /> {status}
-                      </span>
-                      {t?.targetId ? (
-                        <button
-                          disabled={busy}
-                          onClick={() => void approveAndRunAudit(t)}
-                          className="text-xs px-3 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 border border-cyan-500/30 disabled:opacity-50"
-                        >
-                          Approve + Run Audit
-                        </button>
-                      ) : null}
-                    </div>
                   </div>
-                );
-              })}
-           </div>
+                ) : null}
+
+                {integration.action ? (
+                  <p className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs text-cyan-100">
+                    {integration.action}
+                  </p>
+                ) : null}
+              </article>
+            ))
+          ) : (
+            <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 text-sm text-slate-400 lg:col-span-3">
+              Waiting for the backend readiness snapshot...
+            </article>
+          )}
         </section>
 
-        {/* Findings Gallery */}
-        <section className="pt-8">
-           <h2 className="text-xl font-bold mb-6 border-b border-gray-800 pb-4">Verified Findings</h2>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {(findings || []).slice(0, 6).map((mem, idx) => {
-                const report = mem?.content?.report;
-                const t = mem?.content?.target;
-                const title = report?.title ?? "Finding";
-                const sev = String(report?.severity ?? "high").toLowerCase();
-                const sevBadge =
-                  sev === "critical"
-                    ? "text-red-500 bg-red-500/10 border-red-500/20"
-                    : sev === "high"
-                      ? "text-orange-400 bg-orange-400/10 border-orange-400/20"
-                      : "text-yellow-400 bg-yellow-400/10 border-yellow-400/20";
-                const desc = report?.description ?? extractText(mem);
+        <section className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-white">Scout Feed</h2>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Queue and approval state</p>
+            </div>
+
+            {(scoutItems || []).length > 0 ? (
+              (scoutItems || []).slice(0, 10).map((mem, idx) => {
+                const targetRecord = extractTarget(mem);
+                const text = extractText(mem);
+                const hitlForTarget = (hitlItems || []).find((item) =>
+                  extractText(item).includes(targetRecord?.targetId ? `TARGET_ID:${targetRecord.targetId}` : "__none__")
+                );
+                const hitlText = hitlForTarget ? extractText(hitlForTarget) : "";
+                const status = hitlText.includes("APPROVED")
+                  ? "Approved"
+                  : hitlText.includes("PENDING")
+                    ? "Awaiting approval"
+                    : "New";
+                const statusTone = hitlText.includes("APPROVED")
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-300";
 
                 return (
-                  <div key={idx} className="p-6 rounded-2xl bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-800 relative group overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                      <svg className="w-24 h-24" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-                    </div>
-                    <div className="relative z-10">
-                      <div className="flex justify-between items-center mb-4">
-                        <span className={`text-xs font-bold px-3 py-1 rounded-full border ${sevBadge}`}>
-                          {sev} severity
-                        </span>
-                        <span className="text-xs font-mono text-gray-500">{t?.displayName ?? ""}</span>
+                  <article
+                    key={idx}
+                    className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 transition hover:border-cyan-400/20"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-200">
+                            {targetRecord?.type ?? "target"}
+                          </span>
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone}`}>
+                            {status}
+                          </span>
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-white">{targetRecord?.displayName ?? "Target"}</h3>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-400">{text}</p>
+                        </div>
                       </div>
-                      <h3 className="text-lg font-bold text-white mb-2">{title}</h3>
-                      <p className="text-sm text-gray-400 mb-6 line-clamp-3">{desc}</p>
-                      <div className="flex gap-3">
-                        <button className="flex-1 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium transition-colors border border-gray-700">
-                          View Report
-                        </button>
-                        <button className="flex-1 py-2 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 text-sm font-medium transition-colors border border-cyan-500/30 flex items-center justify-center gap-2">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                          Download PoC
-                        </button>
+
+                      <div className="flex min-w-[180px] flex-col gap-3">
+                        <p className="text-right text-xs uppercase tracking-[0.3em] text-slate-500">
+                          {extractStage(mem) ?? "scout"}
+                        </p>
+                        {targetRecord?.targetId ? (
+                          <button
+                            disabled={busy || !modelReadiness?.available}
+                            onClick={() => void approveAndRunAudit(targetRecord)}
+                            className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={!modelReadiness?.available ? modelReadiness?.summary : undefined}
+                          >
+                            {modelReadiness?.available ? "Approve + Run Audit" : "Audit Unavailable"}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
-                  </div>
+                  </article>
                 );
-              })}
-           </div>
+              })
+            ) : (
+              <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
+                No targets are queued yet. Submit a repository or Immunefi-style identifier above to start the approval flow.
+              </article>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-white">Reviewed Findings</h2>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Published output</p>
+            </div>
+
+            {(findings || []).length > 0 ? (
+              (findings || []).slice(0, 6).map((mem, idx) => {
+                const report = mem?.content?.report;
+                const targetRecord = mem?.content?.target;
+                const title = report?.title ?? "Finding";
+                const severity = String(report?.severity ?? "high").toLowerCase();
+                const severityTone =
+                  severity === "critical"
+                    ? "border-red-500/30 bg-red-500/10 text-red-300"
+                    : severity === "high"
+                      ? "border-orange-500/30 bg-orange-500/10 text-orange-300"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-300";
+                const description = report?.description ?? extractText(mem);
+
+                return (
+                  <article
+                    key={idx}
+                    className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone}`}>
+                        {severity}
+                      </span>
+                      <span className="text-xs text-slate-500">{targetRecord?.displayName ?? ""}</span>
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-white">{title}</h3>
+                    <p className="mt-3 text-sm leading-6 text-slate-400">{description}</p>
+                  </article>
+                );
+              })
+            ) : (
+              <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
+                Published findings will appear here after approval, audit, and review all complete successfully.
+              </article>
+            )}
+          </div>
         </section>
       </main>
     </div>

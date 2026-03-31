@@ -11,6 +11,7 @@ import {
   logger,
 } from "@elizaos/core";
 import { createDocumentMemory } from "../../pipeline/memory.js";
+import { getIntegrationReadiness } from "../../readiness.js";
 
 type ScoutData = {
   scoutMode: "DEMO" | "LIVE";
@@ -98,6 +99,19 @@ export const scoutAction: Action = {
     // 2. Attempt connection to infosec-us-team/immunefi-mcp (via the configured MCP plugin)
     const targetQuery = (message.content as any)?.text || "DeFi protocols";
     console.log(`[Scout] Engaging Immunefi MCP for target analysis: ${targetQuery}`);
+
+    const immunefiReadiness = getIntegrationReadiness("immunefiMcp");
+    if (!immunefiReadiness.available) {
+      const errText = [
+        "SCOUT REPORT: Live Immunefi Scout is unavailable.",
+        immunefiReadiness.summary,
+        immunefiReadiness.action ? `Action: ${immunefiReadiness.action}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      if (callback) await callback({ text: errText, action: "SCOUT_COMPLETE" });
+      return { success: false, text: errText } as any;
+    }
 
     const mcpService = runtime.getService?.("mcp") as any;
     if (!mcpService?.callTool) {

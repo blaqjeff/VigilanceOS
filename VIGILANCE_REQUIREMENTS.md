@@ -45,3 +45,5 @@
 - Stake/Star confirmation reminder.
 - Builder credits check.
 - `DEMO_MODE=true` for video demonstration.
+> Note: `PROJECT_SCOPE.md` is now the primary source of truth for product intent, implementation priorities, and tradeoffs.
+> Use this file as the original challenge-oriented requirements reference, and use `PROJECT_SCOPE.md` when the two documents differ.

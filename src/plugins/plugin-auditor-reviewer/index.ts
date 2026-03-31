@@ -13,6 +13,7 @@ import {
 
 import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
 import { writeAudit, writeFinding, writeReview } from "../../pipeline/memory.js";
+import { getIntegrationReadiness } from "../../readiness.js";
 
 // --- AUDITOR (HUNTER) PORTION ---
 
@@ -58,6 +59,19 @@ export const executeAuditAction: Action = {
       const waitText = `⏸️ Auditor could not verify approval state. Please ensure HITL gate was completed (reply with /approve).`;
       if (callback) await callback({ text: waitText, action: "WAITING_FOR_APPROVAL" });
       return { success: true, text: waitText } as any;
+    }
+
+    const modelReadiness = getIntegrationReadiness("model");
+    if (!modelReadiness.available) {
+      const unavailableText = [
+        "Audit cannot start because the primary model backend is unavailable.",
+        modelReadiness.summary,
+        modelReadiness.action ? `Action: ${modelReadiness.action}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      if (callback) await callback({ text: unavailableText, action: "AUDIT_UNAVAILABLE" });
+      return { success: false, text: unavailableText } as any;
     }
 
     const processMessage = `\n[Auditor] Target: ${target.displayName}\n[Qwen3.5-27B-AWQ-4bit] Generating structured audit report...\n`;

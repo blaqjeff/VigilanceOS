@@ -41,6 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 memory.*
+!src/pipeline/memory.ts
 .mastra
 
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.

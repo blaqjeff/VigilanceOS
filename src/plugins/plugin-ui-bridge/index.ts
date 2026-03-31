@@ -2,6 +2,7 @@ import type { Plugin, Route } from "@elizaos/core";
 import { MemoryType, logger } from "@elizaos/core";
 import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
 import { createDocumentMemory, writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
+import { getIntegrationReadiness, getReadinessSnapshot } from "../../readiness.js";
 
 function json(res: any, status: number, body: any) {
   res.status(status);
@@ -139,6 +140,15 @@ const runAuditRoute: Route = {
       const approved = await findApproved(runtime, roomId, target.targetId);
       if (!approved) return json(res, 403, { success: false, error: "Target not approved (HITL)" });
 
+      const modelReadiness = getIntegrationReadiness("model");
+      if (!modelReadiness.available) {
+        return json(res, 503, {
+          success: false,
+          error: "Model-backed auditing is unavailable",
+          readiness: modelReadiness,
+        });
+      }
+
       const report = await runAudit(runtime, { target });
       const verdict = await runReview(runtime, { target, report });
 
@@ -151,6 +161,21 @@ const runAuditRoute: Route = {
       return json(res, 200, { success: true, data: { target, report, verdict } });
     } catch (e) {
       logger.error(`[UIBridge] audit failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+const readinessRoute: Route = {
+  name: "vigilance-readiness",
+  path: "/vigilance/readiness",
+  type: "GET",
+  public: true,
+  handler: async (_req: any, res: any) => {
+    try {
+      return json(res, 200, { success: true, data: getReadinessSnapshot() });
+    } catch (e) {
+      logger.error(`[UIBridge] readiness failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
     }
   },
@@ -197,6 +222,6 @@ export const uiBridgePlugin: Plugin = {
   actions: [],
   evaluators: [],
   providers: [],
-  routes: [createTargetRoute, approveTargetRoute, runAuditRoute, feedRoute, findingsRoute],
+  routes: [createTargetRoute, approveTargetRoute, runAuditRoute, feedRoute, findingsRoute, readinessRoute],
 };
 
