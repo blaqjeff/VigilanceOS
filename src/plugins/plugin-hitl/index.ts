@@ -1,4 +1,34 @@
-import { Plugin, Action, IAgentRuntime, Memory, State, HandlerCallback, HandlerOptions, ActionResult } from "@elizaos/core";
+import {
+  Plugin,
+  Action,
+  IAgentRuntime,
+  Memory,
+  State,
+  HandlerCallback,
+  HandlerOptions,
+  ActionResult,
+  MemoryType,
+  logger,
+} from "@elizaos/core";
+
+function extractScoutData(state?: State): any | null {
+  const s = state as any;
+  return s?.scoutData ?? s?.values?.scoutData ?? s?.data?.scoutData ?? null;
+}
+
+function roomIdFromMessage(message: Memory): any {
+  return (message as any).roomId;
+}
+
+function userIdFromMessage(message: Memory): any {
+  return (message as any).userId;
+}
+
+function extractTargetIdFromText(text?: string): string | undefined {
+  if (!text) return undefined;
+  const match = text.match(/TARGET_ID:([^\s]+)/);
+  return match?.[1];
+}
 
 export const requestApprovalAction: Action = {
   name: "REQUEST_APPROVAL",
@@ -8,15 +38,43 @@ export const requestApprovalAction: Action = {
     return true;
   },
   handler: async (runtime: IAgentRuntime, message: Memory, state?: State, options?: HandlerOptions, callback?: HandlerCallback): Promise<ActionResult> => {
-    const targetDetails = (state as Record<string, unknown>)?.scoutData || message.content?.text || "Unknown Target";
+    const scoutData = extractScoutData(state);
+    const targetDetails =
+      scoutData?.projectName ??
+      scoutData?.projectId ??
+      (state as Record<string, unknown>)?.scoutData ??
+      (message.content as any)?.text ??
+      "Unknown Target";
+    const targetId = String(scoutData?.projectId ?? scoutData?.projectName ?? targetDetails);
 
-    const alertMessage = `🚨 **Human Approval Required** 🚨\nTarget: ${targetDetails}\nType: Pending Review.\n\nReply with \`/approve\` to proceed with full auditor scan.`;
+    const pendingText = `HITL_STAGE:PENDING TARGET_ID:${targetId}\nTarget: ${targetDetails}\nType: Pending Review. Reply with /approve to proceed.`;
+
+    try {
+      await runtime.createMemory({
+        type: MemoryType.DOCUMENT,
+        content: {
+          text: pendingText,
+          scoutData,
+        },
+        roomId: roomIdFromMessage(message),
+        userId: userIdFromMessage(message),
+        metadata: {
+          stage: "hitl",
+          status: "PENDING",
+          targetId,
+        },
+      } as any);
+    } catch (e) {
+      logger.warn(`[HITL] Failed to persist pending approval: ${e}`);
+    }
+
+    const alertMessage = `🚨 **Human Approval Required** 🚨\nTarget: ${targetDetails}\n\nReply with \`/approve\` to proceed with full auditor scan.`;
 
     if (callback) {
       await callback({ text: alertMessage, action: "WAITING_FOR_APPROVAL" });
     }
 
-    return { success: true, text: alertMessage };
+    return { success: true, text: alertMessage, values: { scoutData, targetId } } as any;
   },
   examples: [
     [
@@ -34,13 +92,68 @@ export const approveAction: Action = {
     return true;
   },
   handler: async (runtime: IAgentRuntime, message: Memory, state?: State, options?: HandlerOptions, callback?: HandlerCallback): Promise<ActionResult> => {
-    const confMessage = `✅ **Approved**. Auditor agent is now spinning up Nosana Compute instance for deep code analysis...`;
+    const scoutData = extractScoutData(state);
+    const targetDetails =
+      scoutData?.projectName ??
+      scoutData?.projectId ??
+      (state as any)?.scoutData ??
+      (message.content as any)?.text ??
+      "Unknown Target";
+
+    const explicitTargetId: string | undefined = scoutData?.projectId
+      ? String(scoutData.projectId)
+      : scoutData?.projectName
+        ? String(scoutData.projectName)
+        : undefined;
+
+    const roomId = roomIdFromMessage(message);
+    const userId = userIdFromMessage(message);
+
+    // Find the latest pending approval in this room.
+    const pendingQuery = "HITL_STAGE:PENDING";
+    const pendingMemories: any[] = (await (runtime as any).searchMemories?.({
+      query: pendingQuery,
+      type: MemoryType.DOCUMENT,
+      roomId,
+      limit: 10,
+    })) as any[];
+
+    const sorted = (pendingMemories || []).sort(
+      (a, b) => (b?.createdAt?.getTime?.() ?? 0) - (a?.createdAt?.getTime?.() ?? 0)
+    );
+    const bestPending = sorted[0] as any | undefined;
+    const pendingText = bestPending?.content?.text ?? bestPending?.content?.[0]?.text ?? bestPending?.text;
+
+    const foundTargetId = extractTargetIdFromText(pendingText) ?? explicitTargetId;
+    const finalTargetId = foundTargetId ?? explicitTargetId ?? String(targetDetails);
+    const finalScoutData = scoutData ?? bestPending?.content?.scoutData ?? null;
+
+    try {
+      await runtime.createMemory({
+        type: MemoryType.DOCUMENT,
+        content: {
+          text: `HITL_STAGE:APPROVED TARGET_ID:${finalTargetId}\nTarget: ${targetDetails}\nApproved by user.`,
+          scoutData: finalScoutData,
+        },
+        roomId,
+        userId,
+        metadata: {
+          stage: "hitl",
+          status: "APPROVED",
+          targetId: finalTargetId,
+        },
+      } as any);
+    } catch (e) {
+      logger.warn(`[HITL] Failed to persist approval: ${e}`);
+    }
+
+    const confMessage = `✅ **Approved**. Auditor agent can now start deep code analysis for '${targetDetails}'.`;
 
     if (callback) {
       await callback({ text: confMessage, action: "START_AUDITOR" });
     }
 
-    return { success: true, text: confMessage };
+    return { success: true, text: confMessage, values: { scoutData: finalScoutData, targetId: finalTargetId } } as any;
   },
   examples: [
     [

@@ -5,8 +5,8 @@ nosana:
   container:
     image: "nosana-eliza-agent:latest"
     env:
-      MODEL_NAME: "qwen3.5-27b"
-      OPENAI_API_URL: "nosana-local-inference-endpoint"
+      MODEL_NAME: "Qwen3.5-27B-AWQ-4bit"
+      OPENAI_API_URL: "https://6vq2bcqphcansrs9b88ztxfs88oqy7etah2ugudytv2x.node.k8s.prd.nos.ci/v1"
       OPENAI_API_KEY: "nosana"
       TELEGRAM_BOT_TOKEN: "%%SECRETS.TELEGRAM_BOT_TOKEN%%"
       NODE_ENV: "production"

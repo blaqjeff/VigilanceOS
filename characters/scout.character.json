@@ -6,7 +6,8 @@
     "@elizaos/plugin-telegram",
     "@elizaos/plugin-mcp",
     "./src/plugins/plugin-scout",
-    "./src/plugins/plugin-hitl"
+    "./src/plugins/plugin-hitl",
+    "./src/plugins/plugin-ui-bridge"
   ],
   "clients": ["telegram"],
   "modelProvider": "openai",

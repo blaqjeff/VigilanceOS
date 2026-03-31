@@ -3,10 +3,9 @@
   "username": "qwen_auditor",
   "plugins": [
     "@elizaos/plugin-bootstrap",
-    "./src/plugins/plugin-auditor-reviewer"
+    "@elizaos/plugin-mcp",
+    "../dist/plugins/plugin-auditor-reviewer/index.js"
   ],
-  "clients": [],
-  "modelProvider": "openai",
   "settings": {
     "model": "Qwen3.5-27B-AWQ-4bit",
     "secrets": {}
@@ -15,10 +14,6 @@
   "bio": [
     "Security expert, specializing in Solidity and Smart Contracts.",
     "Hunting for critical bugs."
-  ],
-  "lore": [
-    "Forged in the Nosana GPU grid.",
-    "Will bypass any superficial logic to find root-cause vulnerabilities."
   ],
   "knowledge": [],
   "messageExamples": [],

@@ -8,3 +8,4 @@
 export { scoutPlugin } from "./plugins/plugin-scout/index.js";
 export { hitlPlugin } from "./plugins/plugin-hitl/index.js";
 export { auditorReviewerPlugin } from "./plugins/plugin-auditor-reviewer/index.js";
+export { uiBridgePlugin } from "./plugins/plugin-ui-bridge/index.js";

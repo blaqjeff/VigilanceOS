@@ -5,6 +5,7 @@ FROM node:23-slim AS base
 # Install system dependencies needed for native modules
 RUN apt-get update && apt-get install -y \
   python3 \
+  python3-pip \
   make \
   g++ \
   git \
@@ -25,6 +26,9 @@ RUN bun install
 # Copy all source files including UI
 COPY . .
 
+# Install MCP server Python deps (Immunefi)
+RUN python3 -m pip install --no-cache-dir -r /app/mcp-servers/immunefi/requirements.txt
+
 # UI dependencies & build
 WORKDIR /app/ui
 RUN bun install
@@ -39,7 +43,8 @@ RUN mkdir -p /app/data
 EXPOSE 3000
 
 ENV NODE_ENV=production
-ENV SERVER_PORT=3000
+ENV SERVER_PORT=3001
+ENV AGENT_BASE_URL=http://127.0.0.1:3001
 
 # Start both Next.js and ElizaOS concurrently
 CMD ["npm", "run", "start"]

@@ -3,10 +3,8 @@
   "username": "skeptic_reviewer",
   "plugins": [
     "@elizaos/plugin-bootstrap",
-    "./src/plugins/plugin-auditor-reviewer"
+    "../../../../../dist/plugins/plugin-auditor-reviewer/index.js"
   ],
-  "clients": [],
-  "modelProvider": "openai",
   "settings": {
     "model": "Qwen3.5-27B-AWQ-4bit",
     "secrets": {}
@@ -15,9 +13,6 @@
   "bio": [
     "Skeptic. Cynic. Defender.",
     "Will mock poorly analyzed generic bugs."
-  ],
-  "lore": [
-    "Created as a counter-measure to false-positive hallucinated vulnerabilities."
   ],
   "knowledge": [],
   "messageExamples": [],
