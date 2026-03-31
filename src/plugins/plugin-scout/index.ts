@@ -10,6 +10,7 @@ import {
   MemoryType,
   logger,
 } from "@elizaos/core";
+import { createDocumentMemory } from "../../pipeline/memory.js";
 
 type ScoutData = {
   scoutMode: "DEMO" | "LIVE";
@@ -73,20 +74,19 @@ export const scoutAction: Action = {
 
       // Persist structured context for HITL/Auditor downstream.
       try {
-        await runtime.createMemory({
-          type: MemoryType.DOCUMENT,
-          content: {
-            text: reportText,
-            scoutData,
-          },
+        await createDocumentMemory(runtime, {
           roomId: (message as any).roomId,
           userId: (message as any).userId,
+          text: reportText,
+          content: {
+            scoutData,
+          },
           metadata: {
             stage: "scout",
             scoutMode: scoutData.scoutMode,
             projectName: scoutData.projectName,
           },
-        } as any);
+        });
       } catch (e) {
         logger.warn(`[Scout] Failed to persist DEMO scout memory: ${e}`);
       }
@@ -186,21 +186,20 @@ export const scoutAction: Action = {
 
     // Persist structured context for downstream agents.
     try {
-      await runtime.createMemory({
-        type: MemoryType.DOCUMENT,
-        content: {
-          text: reportText,
-          scoutData,
-        },
+      await createDocumentMemory(runtime, {
         roomId: (message as any).roomId,
         userId: (message as any).userId,
+        text: reportText,
+        content: {
+          scoutData,
+        },
         metadata: {
           stage: "scout",
           scoutMode: scoutData.scoutMode,
           projectId: scoutData.projectId,
           projectName: projectNameLabel,
         },
-      } as any);
+      });
     } catch (e) {
       logger.warn(`[Scout] Failed to persist LIVE scout memory: ${e}`);
     }

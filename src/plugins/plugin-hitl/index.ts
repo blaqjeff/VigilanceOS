@@ -10,6 +10,7 @@ import {
   MemoryType,
   logger,
 } from "@elizaos/core";
+import { createDocumentMemory } from "../../pipeline/memory.js";
 
 function extractScoutData(state?: State): any | null {
   const s = state as any;
@@ -50,20 +51,19 @@ export const requestApprovalAction: Action = {
     const pendingText = `HITL_STAGE:PENDING TARGET_ID:${targetId}\nTarget: ${targetDetails}\nType: Pending Review. Reply with /approve to proceed.`;
 
     try {
-      await runtime.createMemory({
-        type: MemoryType.DOCUMENT,
-        content: {
-          text: pendingText,
-          scoutData,
-        },
+      await createDocumentMemory(runtime, {
         roomId: roomIdFromMessage(message),
         userId: userIdFromMessage(message),
+        text: pendingText,
+        content: {
+          scoutData,
+        },
         metadata: {
           stage: "hitl",
           status: "PENDING",
           targetId,
         },
-      } as any);
+      });
     } catch (e) {
       logger.warn(`[HITL] Failed to persist pending approval: ${e}`);
     }
@@ -129,20 +129,19 @@ export const approveAction: Action = {
     const finalScoutData = scoutData ?? bestPending?.content?.scoutData ?? null;
 
     try {
-      await runtime.createMemory({
-        type: MemoryType.DOCUMENT,
-        content: {
-          text: `HITL_STAGE:APPROVED TARGET_ID:${finalTargetId}\nTarget: ${targetDetails}\nApproved by user.`,
-          scoutData: finalScoutData,
-        },
+      await createDocumentMemory(runtime, {
         roomId,
         userId,
+        text: `HITL_STAGE:APPROVED TARGET_ID:${finalTargetId}\nTarget: ${targetDetails}\nApproved by user.`,
+        content: {
+          scoutData: finalScoutData,
+        },
         metadata: {
           stage: "hitl",
           status: "APPROVED",
           targetId: finalTargetId,
         },
-      } as any);
+      });
     } catch (e) {
       logger.warn(`[HITL] Failed to persist approval: ${e}`);
     }

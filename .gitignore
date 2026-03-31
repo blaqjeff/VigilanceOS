@@ -90,5 +90,9 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 bun.lockb
-/.eliza/.elizadb
+.eliza/
+.eliza/runtime-characters/
+backend-*.log
+ui-*.log
 /dist
+characters/*.runtime.json

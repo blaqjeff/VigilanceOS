@@ -1,7 +1,7 @@
 import type { Plugin, Route } from "@elizaos/core";
 import { MemoryType, logger } from "@elizaos/core";
-import { runAudit, runReview, targetFromInput } from "../../pipeline/audit";
-import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory";
+import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
+import { createDocumentMemory, writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 
 function json(res: any, status: number, body: any) {
   res.status(status);
@@ -76,16 +76,15 @@ const createTargetRoute: Route = {
       await writeTarget(runtime, { roomId, userId, target, scoutData });
 
       // Create a HITL pending record immediately so the UI can show status.
-      await runtime.createMemory({
-        type: MemoryType.DOCUMENT,
-        roomId: roomId as any,
-        userId: userId as any,
+      await createDocumentMemory(runtime, {
+        roomId,
+        userId,
+        text: `HITL_STAGE:PENDING TARGET_ID:${target.targetId}\nTarget: ${target.displayName}\nType: Pending Review. Reply with /approve to proceed.`,
         content: {
-          text: `HITL_STAGE:PENDING TARGET_ID:${target.targetId}\nTarget: ${target.displayName}\nType: Pending Review. Reply with /approve to proceed.`,
           scoutData,
         },
         metadata: { stage: "hitl", status: "PENDING", targetId: target.targetId },
-      } as any);
+      });
 
       return json(res, 200, { success: true, data: { target } });
     } catch (e) {
@@ -108,13 +107,12 @@ const approveTargetRoute: Route = {
       const targetDisplay = String(req.body?.targetDisplayName ?? targetId);
       if (!targetId) return json(res, 400, { success: false, error: "targetId is required" });
 
-      await runtime.createMemory({
-        type: MemoryType.DOCUMENT,
-        roomId: roomId as any,
-        userId: userId as any,
-        content: { text: `HITL_STAGE:APPROVED TARGET_ID:${targetId}\nTarget: ${targetDisplay}\nApproved by UI.` },
+      await createDocumentMemory(runtime, {
+        roomId,
+        userId,
+        text: `HITL_STAGE:APPROVED TARGET_ID:${targetId}\nTarget: ${targetDisplay}\nApproved by UI.`,
         metadata: { stage: "hitl", status: "APPROVED", targetId },
-      } as any);
+      });
 
       return json(res, 200, { success: true });
     } catch (e) {

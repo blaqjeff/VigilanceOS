@@ -10,7 +10,9 @@ nosana:
       OPENAI_API_KEY: "nosana"
       TELEGRAM_BOT_TOKEN: "%%SECRETS.TELEGRAM_BOT_TOKEN%%"
       NODE_ENV: "production"
-    expose: 3000
+      SERVER_PORT: "3001"
+      AGENT_BASE_URL: "http://127.0.0.1:3001"
+    expose: 4001
     command: ["npm", "run", "start"]
   compute:
     gpu: true

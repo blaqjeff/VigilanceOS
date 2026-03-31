@@ -1,13 +1,13 @@
 
 const fetchAgents = async () => {
     try {
-        const res = await fetch("http://localhost:3000/api/agents");
+        const res = await fetch("http://localhost:3001/api/agents");
         const data = await res.json();
         const scout = data.agents.find(a => a.name.toLowerCase().includes("scout"));
         console.log("Scout ID:", scout.id);
         
         // Try Direct messaging
-        const msgRes = await fetch(`http://localhost:3000/api/agents/${scout.id}/message`, {
+        const msgRes = await fetch(`http://localhost:3001/api/agents/${scout.id}/message`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -21,7 +21,7 @@ const fetchAgents = async () => {
         console.log("Direct Msg Response:", msgText.substring(0, 100));
         
         // Try Session messaging (the way api-client does it)
-        const sessionRes = await fetch("http://localhost:3000/api/messaging/sessions", {
+        const sessionRes = await fetch("http://localhost:3001/api/messaging/sessions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ agentId: scout.id })
@@ -31,7 +31,7 @@ const fetchAgents = async () => {
             const sessionData = await sessionRes.json();
             const sessionId = sessionData.id || sessionData.session.id;
             console.log("Session ID:", sessionId);
-            const sessMsgRes = await fetch(`http://localhost:3000/api/messaging/sessions/${sessionId}/messages`, {
+            const sessMsgRes = await fetch(`http://localhost:3001/api/messaging/sessions/${sessionId}/messages`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text: "Test Audit" })

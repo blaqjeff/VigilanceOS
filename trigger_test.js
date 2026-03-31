@@ -8,7 +8,7 @@ async function run() {
   ];
   for (const p of paths) {
     console.log(`Trying ${p}...`);
-    const res = await fetch(`http://localhost:3000${p}`, {
+    const res = await fetch(`http://localhost:3001${p}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

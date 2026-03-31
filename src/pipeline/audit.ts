@@ -1,6 +1,6 @@
 import type { IAgentRuntime } from "@elizaos/core";
-import type { AuditReport, ReviewerVerdict, Target } from "./types";
-import { simpleHash } from "./utils";
+import type { AuditReport, ReviewerVerdict, Target } from "./types.js";
+import { simpleHash } from "./utils.js";
 
 function normalizeGithubUrl(input: string): string {
   const trimmed = input.trim();

@@ -16,12 +16,9 @@ ENV DO_NOT_TRACK=1
 
 WORKDIR /app
 
-# Global installations
-RUN npm install -g pnpm bun concurrently
-
 # Backend dependencies
-COPY package.json bun.lock* ./
-RUN bun install
+COPY package.json ./
+RUN npm install
 
 # Copy all source files including UI
 COPY . .
@@ -29,9 +26,13 @@ COPY . .
 # Install MCP server Python deps (Immunefi)
 RUN python3 -m pip install --no-cache-dir -r /app/mcp-servers/immunefi/requirements.txt
 
+# Build backend plugin output expected by the character files
+WORKDIR /app
+RUN npm run build:backend
+
 # UI dependencies & build
 WORKDIR /app/ui
-RUN bun install
+RUN npm install
 RUN npm run build
 
 WORKDIR /app
@@ -39,12 +40,12 @@ WORKDIR /app
 # Create data directory for SQLite
 RUN mkdir -p /app/data
 
-# UI will bind to 3000
-EXPOSE 3000
+# UI will bind to 4001
+EXPOSE 4001
 
 ENV NODE_ENV=production
 ENV SERVER_PORT=3001
 ENV AGENT_BASE_URL=http://127.0.0.1:3001
 
-# Start both Next.js and ElizaOS concurrently
+# Start both Next.js and the backend
 CMD ["npm", "run", "start"]

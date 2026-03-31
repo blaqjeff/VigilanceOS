@@ -11,8 +11,8 @@ import {
   logger,
 } from "@elizaos/core";
 
-import { runAudit, runReview, targetFromInput } from "../../pipeline/audit";
-import { writeAudit, writeFinding, writeReview } from "../../pipeline/memory";
+import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
+import { writeAudit, writeFinding, writeReview } from "../../pipeline/memory.js";
 
 // --- AUDITOR (HUNTER) PORTION ---
 
