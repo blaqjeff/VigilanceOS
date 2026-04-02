@@ -97,3 +97,6 @@ backend-*.log
 ui-*.log
 /dist
 characters/*.runtime.json
+
+# Ingestion work directory
+.vigilance-work/

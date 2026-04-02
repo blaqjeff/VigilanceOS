@@ -11,13 +11,16 @@ import {
 } from "@elizaos/core";
 
 import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
+import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview } from "../../pipeline/memory.js";
 import { getIntegrationReadiness } from "../../readiness.js";
+import type { IngestionResult } from "../../pipeline/types.js";
 import {
   findApprovedJob,
   getJob,
   getJobByTargetId,
   transitionJob,
+  updateJobData,
 } from "../../pipeline/jobStore.js";
 
 // ---------------------------------------------------------------------------
@@ -118,11 +121,23 @@ export const executeAuditAction: Action = {
 
     const processMessage = `\n[Auditor] Target: ${target.displayName}\n[Auditor] Job: ${job.jobId}\n[Qwen3.5-27B-AWQ-4bit] Generating structured audit report...\n`;
 
+    // --- INGESTION: clone repo or read local folder ---
+    let ingestion: IngestionResult | undefined;
+    try {
+      if (job.target.type === "github" || job.target.type === "local") {
+        ingestion = await ingestTarget(job.target);
+        updateJobData(job.jobId, { ingestion });
+      }
+    } catch (ingestionErr: any) {
+      logger.warn(`[Auditor] Ingestion failed: ${ingestionErr?.message}`);
+    }
+
     // Run the audit
     let report;
     try {
-      report = await runAudit(runtime, { target, scopeContext: scoutData });
+      report = await runAudit(runtime, { target, scopeContext: scoutData, ingestion });
     } catch (auditErr: any) {
+      if (ingestion) cleanupIngestion(ingestion);
       const errorMsg = `Audit engine error: ${auditErr?.message ?? auditErr}`;
       try {
         transitionJob(job.jobId, "failed", { error: errorMsg });
@@ -165,8 +180,9 @@ export const executeAuditAction: Action = {
     // Run reviewer
     let verdict;
     try {
-      verdict = await runReview(runtime, { target, report, scopeContext: scoutData });
+      verdict = await runReview(runtime, { target, report, scopeContext: scoutData, ingestion });
     } catch (reviewErr: any) {
+      if (ingestion) cleanupIngestion(ingestion);
       const errorMsg = `Review engine error: ${reviewErr?.message ?? reviewErr}`;
       try {
         transitionJob(job.jobId, "failed", { error: errorMsg });
@@ -176,6 +192,9 @@ export const executeAuditAction: Action = {
       if (callback) await callback({ text: errorMsg, action: "REVIEW_FAILED" });
       return { success: false, text: errorMsg } as any;
     }
+
+    // Cleanup cloned repos now that both audit + review are done
+    if (ingestion) cleanupIngestion(ingestion);
 
     await writeReview(runtime, { roomId, userId, target, report, verdict });
 

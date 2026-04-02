@@ -2,12 +2,64 @@
 
 import React from "react";
 
+// ---------------------------------------------------------------------------
+// Types — mirrors backend AuditJob
+// ---------------------------------------------------------------------------
+
+type AuditJobState =
+  | "submitted"
+  | "pending_approval"
+  | "approved"
+  | "scanning"
+  | "reviewing"
+  | "published"
+  | "discarded"
+  | "failed";
+
 type Target = {
   targetId: string;
   type: string;
   displayName: string;
   url?: string;
 };
+
+type AuditReport = {
+  reportId: string;
+  targetId: string;
+  title: string;
+  severity: "low" | "medium" | "high" | "critical";
+  description: string;
+  affectedSurface?: string[];
+  recommendations?: string[];
+  poc?: { framework: string; text: string };
+};
+
+type ReviewerVerdict = {
+  verdict: "publish" | "discard";
+  rationale: string;
+  confidence: number;
+};
+
+type StateTransition = {
+  from: AuditJobState;
+  to: AuditJobState;
+  at: string;
+};
+
+type AuditJob = {
+  jobId: string;
+  state: AuditJobState;
+  target: Target;
+  createdAt: string;
+  updatedAt: string;
+  stateHistory: StateTransition[];
+  report?: AuditReport;
+  verdict?: ReviewerVerdict;
+  error?: string;
+  scoutData?: Record<string, unknown> | null;
+};
+
+type JobStats = Record<AuditJobState, number>;
 
 type ReadinessIntegration = {
   key: string;
@@ -28,22 +80,9 @@ type ReadinessSnapshot = {
   integrations: Record<string, ReadinessIntegration>;
 };
 
-function extractText(mem: any): string {
-  return mem?.content?.text ?? mem?.content?.[0]?.text ?? mem?.text ?? "";
-}
-
-function extractStage(mem: any): string | undefined {
-  return mem?.metadata?.stage;
-}
-
-function extractTarget(mem: any): Target | null {
-  const t = mem?.content?.target;
-  if (t?.targetId) return t as Target;
-  const txt = extractText(mem);
-  const match = txt.match(/TARGET_ID:([^\s]+)/);
-  if (!match) return null;
-  return { targetId: match[1], type: "unknown", displayName: match[1] };
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function readinessTone(state?: string): string {
   switch (state) {
@@ -58,33 +97,369 @@ function readinessTone(state?: string): string {
   }
 }
 
+function stateTone(state: AuditJobState): string {
+  switch (state) {
+    case "submitted":
+      return "border-slate-400/30 bg-slate-400/10 text-slate-300";
+    case "pending_approval":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    case "approved":
+      return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+    case "scanning":
+      return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
+    case "reviewing":
+      return "border-violet-400/30 bg-violet-400/10 text-violet-300";
+    case "published":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "discarded":
+      return "border-slate-500/30 bg-slate-500/10 text-slate-400";
+    case "failed":
+      return "border-red-500/30 bg-red-500/10 text-red-300";
+    default:
+      return "border-slate-500/30 bg-slate-500/10 text-slate-400";
+  }
+}
+
+function stateLabel(state: AuditJobState): string {
+  return state.replace(/_/g, " ");
+}
+
+function severityTone(severity: string): string {
+  switch (severity.toLowerCase()) {
+    case "critical":
+      return "border-red-500/30 bg-red-500/10 text-red-300";
+    case "high":
+      return "border-orange-500/30 bg-orange-500/10 text-orange-300";
+    case "medium":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    default:
+      return "border-slate-400/30 bg-slate-400/10 text-slate-300";
+  }
+}
+
+function formatTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString();
+  } catch {
+    return iso;
+  }
+}
+
+function formatDateTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+  } catch {
+    return iso;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle step indicator
+// ---------------------------------------------------------------------------
+
+const LIFECYCLE_STEPS: AuditJobState[] = [
+  "submitted",
+  "pending_approval",
+  "approved",
+  "scanning",
+  "reviewing",
+  "published",
+];
+
+const STEP_LABELS: Record<string, string> = {
+  submitted: "Submitted",
+  pending_approval: "Approval",
+  approved: "Approved",
+  scanning: "Scanning",
+  reviewing: "Review",
+  published: "Published",
+};
+
+function LifecycleBar({ job }: { job: AuditJob }) {
+  const isTerminal = ["published", "discarded", "failed"].includes(job.state);
+  const currentIdx = LIFECYCLE_STEPS.indexOf(job.state);
+
+  return (
+    <div className="flex items-center gap-1 mt-3">
+      {LIFECYCLE_STEPS.map((step, idx) => {
+        const isPast = idx < currentIdx || (isTerminal && step !== job.state);
+        const isCurrent = step === job.state;
+        const isFailed = job.state === "failed" && idx === currentIdx;
+        const isDiscarded = job.state === "discarded";
+
+        let dotClass =
+          "h-2 w-2 rounded-full transition-all duration-300 ";
+        if (isCurrent && !isDiscarded) {
+          dotClass += "bg-cyan-400 ring-2 ring-cyan-400/30 scale-125";
+        } else if (isFailed) {
+          dotClass += "bg-red-400 ring-2 ring-red-400/30";
+        } else if (isPast) {
+          dotClass += "bg-emerald-400/60";
+        } else {
+          dotClass += "bg-slate-700";
+        }
+
+        return (
+          <React.Fragment key={step}>
+            <div className="flex flex-col items-center gap-1 min-w-[3rem]">
+              <div className={dotClass} />
+              <span className={`text-[9px] uppercase tracking-wider ${
+                isCurrent ? "text-cyan-300 font-semibold" : "text-slate-600"
+              }`}>
+                {STEP_LABELS[step] ?? step}
+              </span>
+            </div>
+            {idx < LIFECYCLE_STEPS.length - 1 && (
+              <div className={`flex-1 h-px min-w-2 ${
+                isPast ? "bg-emerald-400/40" : "bg-slate-800"
+              }`} />
+            )}
+          </React.Fragment>
+        );
+      })}
+
+      {/* Terminal states */}
+      {job.state === "discarded" && (
+        <>
+          <div className="flex-1 h-px min-w-2 bg-slate-700" />
+          <div className="flex flex-col items-center gap-1 min-w-[3rem]">
+            <div className="h-2 w-2 rounded-full bg-slate-500 ring-2 ring-slate-500/30 scale-125" />
+            <span className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">
+              Discarded
+            </span>
+          </div>
+        </>
+      )}
+      {job.state === "failed" && (
+        <>
+          <div className="flex-1 h-px min-w-2 bg-red-500/30" />
+          <div className="flex flex-col items-center gap-1 min-w-[3rem]">
+            <div className="h-2 w-2 rounded-full bg-red-500 ring-2 ring-red-500/30 scale-125" />
+            <span className="text-[9px] uppercase tracking-wider text-red-400 font-semibold">
+              Failed
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Job detail modal
+// ---------------------------------------------------------------------------
+
+function JobDetailPanel({
+  job,
+  onClose,
+}: {
+  job: AuditJob;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 rounded-full border border-white/10 bg-slate-900 p-2 text-slate-400 hover:text-white transition"
+        >
+          ✕
+        </button>
+
+        {/* Header */}
+        <div className="flex items-start gap-4">
+          <div className="flex-1">
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
+              Job {job.jobId}
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-white">
+              {job.target.displayName}
+            </h2>
+            {job.target.url && (
+              <a
+                href={job.target.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-sm text-cyan-400 hover:underline"
+              >
+                {job.target.url}
+              </a>
+            )}
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-widest ${stateTone(job.state)}`}>
+              {stateLabel(job.state)}
+            </span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+              job.target.type === "github"
+                ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+                : "border-violet-400/20 bg-violet-400/10 text-violet-200"
+            }`}>
+              {job.target.type}
+            </span>
+          </div>
+        </div>
+
+        <LifecycleBar job={job} />
+
+        {/* Error */}
+        {job.error && (
+          <div className="mt-5 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            <strong>Error:</strong> {job.error}
+          </div>
+        )}
+
+        {/* Report */}
+        {job.report && (
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <h3 className="text-lg font-semibold text-white">Audit Report</h3>
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${severityTone(job.report.severity)}`}>
+                {job.report.severity}
+              </span>
+            </div>
+            <h4 className="text-base font-medium text-slate-200">{job.report.title}</h4>
+            <p className="text-sm leading-6 text-slate-400">{job.report.description}</p>
+
+            {job.report.affectedSurface && job.report.affectedSurface.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Affected Surface</p>
+                <div className="flex flex-wrap gap-2">
+                  {job.report.affectedSurface.map((s, i) => (
+                    <span key={i} className="rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-xs text-slate-300">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {job.report.recommendations && job.report.recommendations.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Recommendations</p>
+                <ul className="space-y-2 text-sm text-slate-400">
+                  {job.report.recommendations.map((r, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400/50" />
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {job.report.poc?.text && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">
+                  PoC ({job.report.poc.framework})
+                </p>
+                <pre className="overflow-x-auto rounded-xl border border-white/5 bg-slate-900 p-4 text-xs leading-5 text-slate-300 font-mono">
+                  {job.report.poc.text}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Verdict */}
+        {job.verdict && (
+          <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/80 p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <h3 className="text-lg font-semibold text-white">Reviewer Verdict</h3>
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${
+                job.verdict.verdict === "publish"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-red-500/30 bg-red-500/10 text-red-300"
+              }`}>
+                {job.verdict.verdict}
+              </span>
+              <span className="text-sm text-slate-400">
+                {Math.round(job.verdict.confidence * 100)}% confidence
+              </span>
+            </div>
+            <p className="text-sm leading-6 text-slate-400">{job.verdict.rationale}</p>
+
+            {/* Confidence bar */}
+            <div className="mt-3 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  job.verdict.verdict === "publish" ? "bg-emerald-400" : "bg-red-400"
+                }`}
+                style={{ width: `${Math.round(job.verdict.confidence * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* State history */}
+        {job.stateHistory.length > 0 && (
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-widest text-slate-500 mb-3">State History</p>
+            <div className="space-y-2">
+              {job.stateHistory.map((t, i) => (
+                <div key={i} className="flex items-center gap-3 text-xs text-slate-500">
+                  <span className="font-mono text-slate-600">{formatTime(t.at)}</span>
+                  <span className={`rounded px-1.5 py-0.5 ${stateTone(t.from)}`}>{stateLabel(t.from)}</span>
+                  <span className="text-slate-700">→</span>
+                  <span className={`rounded px-1.5 py-0.5 ${stateTone(t.to)}`}>{stateLabel(t.to)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 text-xs text-slate-600">
+          Created: {formatDateTime(job.createdAt)} · Updated: {formatDateTime(job.updatedAt)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Active job card (in pipeline)
+// ---------------------------------------------------------------------------
+
+function activeStateAnimation(state: AuditJobState): string {
+  if (state === "scanning" || state === "reviewing") {
+    return "animate-pulse";
+  }
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
 export default function Home() {
   const [target, setTarget] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  const [scoutItems, setScoutItems] = React.useState<any[]>([]);
-  const [hitlItems, setHitlItems] = React.useState<any[]>([]);
-  const [findings, setFindings] = React.useState<any[]>([]);
+  const [jobs, setJobs] = React.useState<AuditJob[]>([]);
+  const [stats, setStats] = React.useState<JobStats | null>(null);
   const [readiness, setReadiness] = React.useState<ReadinessSnapshot | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
   const roomId = "00000000-0000-0000-0000-000000000000";
 
   const refresh = React.useCallback(async () => {
     try {
-      const [feedRes, findingsRes, readinessRes] = await Promise.all([
-        fetch(`/api/vigilance/feed?roomId=${encodeURIComponent(roomId)}`),
-        fetch(`/api/vigilance/findings?roomId=${encodeURIComponent(roomId)}`),
+      const [jobsRes, readinessRes] = await Promise.all([
+        fetch("/api/vigilance/jobs?limit=50"),
         fetch("/api/vigilance/readiness"),
       ]);
 
-      const feedJson = await feedRes.json().catch(() => null);
-      const findingsJson = await findingsRes.json().catch(() => null);
+      const jobsJson = await jobsRes.json().catch(() => null);
       const readinessJson = await readinessRes.json().catch(() => null);
 
-      setScoutItems(feedJson?.data?.scouts ?? []);
-      setHitlItems(feedJson?.data?.hitl ?? []);
-      setFindings(findingsJson?.data?.findings ?? []);
+      setJobs(jobsJson?.data?.jobs ?? []);
+      setStats(jobsJson?.data?.stats ?? null);
       setReadiness(readinessJson?.data ?? null);
-      setActionError(null);
     } catch {
       setActionError("Operator console could not refresh backend state.");
     }
@@ -92,9 +467,21 @@ export default function Home() {
 
   React.useEffect(() => {
     void refresh();
-    const id = setInterval(() => void refresh(), 4000);
+    const id = setInterval(() => void refresh(), 3000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // Also refresh selected job
+  React.useEffect(() => {
+    if (selectedJob) {
+      const updated = jobs.find((j) => j.jobId === selectedJob.jobId);
+      if (updated && updated.updatedAt !== selectedJob.updatedAt) {
+        setSelectedJob(updated);
+      }
+    }
+  }, [jobs, selectedJob]);
+
+  // ---- Actions ----
 
   async function submitTarget() {
     setBusy(true);
@@ -117,41 +504,99 @@ export default function Home() {
     }
   }
 
-  async function approveAndRunAudit(t: Target) {
+  async function approveJob(job: AuditJob) {
     setBusy(true);
     setActionError(null);
     try {
-      const approveRes = await fetch("/api/vigilance/approve", {
+      const res = await fetch("/api/vigilance/approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetId: t.targetId, targetDisplayName: t.displayName, roomId }),
+        body: JSON.stringify({
+          jobId: job.jobId,
+          targetId: job.target.targetId,
+          roomId,
+        }),
       });
-      const approveJson = await approveRes.json().catch(() => null);
-      if (!approveRes.ok) {
-        setActionError(approveJson?.error ?? "Approval failed.");
-        await refresh();
-        return;
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(payload?.error ?? "Approval failed.");
       }
-
-      const auditRes = await fetch("/api/vigilance/audit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetId: t.targetId, roomId }),
-      });
-      const auditJson = await auditRes.json().catch(() => null);
-      if (!auditRes.ok) {
-        setActionError(
-          auditJson?.readiness?.summary ??
-            auditJson?.error ??
-            "Audit could not start."
-        );
-      }
-
       await refresh();
     } finally {
       setBusy(false);
     }
   }
+
+  async function runAudit(job: AuditJob) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/vigilance/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.jobId,
+          targetId: job.target.targetId,
+          roomId,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(
+          payload?.readiness?.summary ?? payload?.error ?? "Audit could not start."
+        );
+      }
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveAndRun(job: AuditJob) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      // Step 1: Approve
+      const approveRes = await fetch("/api/vigilance/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.jobId,
+          targetId: job.target.targetId,
+          roomId,
+        }),
+      });
+      const approvePayload = await approveRes.json().catch(() => null);
+      if (!approveRes.ok) {
+        setActionError(approvePayload?.error ?? "Approval failed.");
+        await refresh();
+        return;
+      }
+
+      // Step 2: Run audit
+      const resolvedJobId = approvePayload?.data?.job?.jobId ?? job.jobId;
+      const auditRes = await fetch("/api/vigilance/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: resolvedJobId,
+          targetId: job.target.targetId,
+          roomId,
+        }),
+      });
+      const auditPayload = await auditRes.json().catch(() => null);
+      if (!auditRes.ok) {
+        setActionError(
+          auditPayload?.readiness?.summary ?? auditPayload?.error ?? "Audit could not start."
+        );
+      }
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---- Computed ----
 
   const readinessItems = readiness ? Object.values(readiness.integrations) : [];
   const modelReadiness = readiness?.integrations?.model;
@@ -160,9 +605,26 @@ export default function Home() {
     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
     : "border-amber-500/30 bg-amber-500/10 text-amber-300";
 
+  // Group jobs
+  const pendingJobs = jobs.filter((j) => j.state === "pending_approval");
+  const approvedJobs = jobs.filter((j) => j.state === "approved");
+  const activeJobs = jobs.filter((j) => j.state === "scanning" || j.state === "reviewing");
+  const publishedJobs = jobs.filter((j) => j.state === "published");
+  const discardedJobs = jobs.filter((j) => j.state === "discarded");
+  const failedJobs = jobs.filter((j) => j.state === "failed");
+
+  const pipelineJobs = [...pendingJobs, ...approvedJobs, ...activeJobs];
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_35%),linear-gradient(180deg,#020617_0%,#020617_45%,#111827_100%)] text-gray-100 font-sans selection:bg-cyan-500 selection:text-white">
-      <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/85 backdrop-blur-md">
+
+      {/* Selected job detail */}
+      {selectedJob && (
+        <JobDetailPanel job={selectedJob} onClose={() => setSelectedJob(null)} />
+      )}
+
+      {/* Header */}
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/85 backdrop-blur-md">
         <div className="mx-auto flex h-18 max-w-7xl items-center justify-between gap-6 px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-cyan-400/30 bg-cyan-400/10 shadow-[0_0_32px_rgba(34,211,238,0.2)]">
@@ -175,61 +637,87 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Stats badges */}
+            {stats && (
+              <div className="hidden md:flex items-center gap-2">
+                {stats.pending_approval > 0 && (
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                    {stats.pending_approval} pending
+                  </span>
+                )}
+                {(stats.scanning + stats.reviewing) > 0 && (
+                  <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 animate-pulse">
+                    {stats.scanning + stats.reviewing} active
+                  </span>
+                )}
+                {stats.published > 0 && (
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                    {stats.published} published
+                  </span>
+                )}
+              </div>
+            )}
             <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${headerTone}`}>
               {readiness ? readiness.overallState : "checking"}
-            </div>
-            <div className="hidden text-right md:block">
-              <p className="text-sm text-slate-200">
-                {readiness?.summary ?? "Checking backend integration readiness..."}
-              </p>
-              <p className="text-xs text-slate-500">
-                {readiness?.checkedAt
-                  ? `Last check ${new Date(readiness.checkedAt).toLocaleTimeString()}`
-                  : "Waiting for first readiness snapshot"}
-              </p>
             </div>
           </div>
         </div>
       </header>
 
       <main className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-8 sm:px-6 lg:px-8">
+
+        {/* Target intake */}
         <section className="relative overflow-hidden rounded-3xl border border-cyan-400/15 bg-slate-900/70 p-6 shadow-2xl shadow-cyan-950/20">
           <div className="absolute inset-y-0 right-0 w-72 bg-[radial-gradient(circle_at_center,_rgba(34,211,238,0.18),_transparent_65%)]" />
           <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
               <p className="text-xs uppercase tracking-[0.35em] text-cyan-300">Golden Path Intake</p>
-              <h2 className="mt-3 text-2xl font-semibold text-white">Submit a target, gate it, and only audit when the stack is truly ready.</h2>
+              <h2 className="mt-3 text-2xl font-semibold text-white">
+                Submit → Approve → Audit → Review → Report
+              </h2>
               <p className="mt-3 text-sm leading-6 text-slate-400">
-                Manual GitHub and Immunefi-style targets stay available through the UI. Live Scout discovery, Telegram approvals,
-                and model-backed auditing now reflect real backend readiness instead of static badges.
+                Submit a target, approve it through the HITL gate, and let the auditor + reviewer pipeline produce a grounded report.
               </p>
             </div>
 
             <div className="flex w-full flex-col gap-3 lg:max-w-xl lg:flex-row">
               <input
+                id="target-input"
                 type="text"
                 value={target}
-                onChange={(event) => setTarget(event.target.value)}
+                onChange={(e) => setTarget(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && target.trim()) void submitTarget();
+                }}
                 className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50"
                 placeholder="github.com/org/repo or Immunefi project identifier"
               />
               <button
+                id="submit-target-btn"
                 disabled={busy || !target.trim()}
                 onClick={() => void submitTarget()}
-                className="rounded-2xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-2xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
               >
-                {busy ? "Working..." : "Queue Target"}
+                {busy ? "Working…" : "Queue Target"}
               </button>
             </div>
           </div>
         </section>
 
-        {actionError ? (
-          <section className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-            {actionError}
+        {/* Error banner */}
+        {actionError && (
+          <section className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100 flex items-center justify-between">
+            <span>{actionError}</span>
+            <button
+              onClick={() => setActionError(null)}
+              className="ml-4 text-red-400 hover:text-white transition text-xs"
+            >
+              dismiss
+            </button>
           </section>
-        ) : null}
+        )}
 
+        {/* Integration readiness */}
         <section className="grid gap-4 lg:grid-cols-3">
           {readinessItems.length > 0 ? (
             readinessItems.map((integration) => (
@@ -246,9 +734,7 @@ export default function Home() {
                     {integration.state}
                   </span>
                 </div>
-
                 <p className="mt-4 text-sm leading-6 text-slate-300">{integration.summary}</p>
-
                 {integration.details?.length ? (
                   <div className="mt-4 space-y-2 text-xs text-slate-500">
                     {integration.details.map((detail, index) => (
@@ -256,7 +742,6 @@ export default function Home() {
                     ))}
                   </div>
                 ) : null}
-
                 {integration.action ? (
                   <p className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-xs text-cyan-100">
                     {integration.action}
@@ -266,122 +751,229 @@ export default function Home() {
             ))
           ) : (
             <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 text-sm text-slate-400 lg:col-span-3">
-              Waiting for the backend readiness snapshot...
+              Waiting for the backend readiness snapshot…
             </article>
           )}
         </section>
 
+        {/* Pipeline + Findings grid */}
         <section className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+
+          {/* Pipeline (queue + active) */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-white">Scout Feed</h2>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Queue and approval state</p>
+              <h2 className="text-xl font-semibold text-white">Audit Pipeline</h2>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                {pipelineJobs.length} in pipeline
+              </p>
             </div>
 
-            {(scoutItems || []).length > 0 ? (
-              (scoutItems || []).slice(0, 10).map((mem, idx) => {
-                const targetRecord = extractTarget(mem);
-                const text = extractText(mem);
-                const hitlForTarget = (hitlItems || []).find((item) =>
-                  extractText(item).includes(targetRecord?.targetId ? `TARGET_ID:${targetRecord.targetId}` : "__none__")
-                );
-                const hitlText = hitlForTarget ? extractText(hitlForTarget) : "";
-                const status = hitlText.includes("APPROVED")
-                  ? "Approved"
-                  : hitlText.includes("PENDING")
-                    ? "Awaiting approval"
-                    : "New";
-                const statusTone = hitlText.includes("APPROVED")
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                  : "border-amber-500/30 bg-amber-500/10 text-amber-300";
-
-                return (
-                  <article
-                    key={idx}
-                    className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 transition hover:border-cyan-400/20"
-                  >
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="space-y-3">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-200">
-                            {targetRecord?.type ?? "target"}
+            {pipelineJobs.length > 0 ? (
+              pipelineJobs.map((job) => (
+                <article
+                  key={job.jobId}
+                  className={`rounded-2xl border border-white/10 bg-slate-900/70 p-5 transition hover:border-cyan-400/20 cursor-pointer ${activeStateAnimation(job.state)}`}
+                  onClick={() => setSelectedJob(job)}
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="space-y-2 flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                          job.target.type === "github"
+                            ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
+                            : "border-violet-400/20 bg-violet-400/10 text-violet-200"
+                        }`}>
+                          {job.target.type}
+                        </span>
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wider ${stateTone(job.state)}`}>
+                          {stateLabel(job.state)}
+                        </span>
+                        {(job.state === "scanning" || job.state === "reviewing") && (
+                          <span className="flex items-center gap-1.5 text-xs text-cyan-400">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                            </span>
+                            processing
                           </span>
-                          <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone}`}>
-                            {status}
-                          </span>
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-semibold text-white">{targetRecord?.displayName ?? "Target"}</h3>
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-400">{text}</p>
-                        </div>
+                        )}
                       </div>
-
-                      <div className="flex min-w-[180px] flex-col gap-3">
-                        <p className="text-right text-xs uppercase tracking-[0.3em] text-slate-500">
-                          {extractStage(mem) ?? "scout"}
-                        </p>
-                        {targetRecord?.targetId ? (
-                          <button
-                            disabled={busy || !modelReadiness?.available}
-                            onClick={() => void approveAndRunAudit(targetRecord)}
-                            className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
-                            title={!modelReadiness?.available ? modelReadiness?.summary : undefined}
-                          >
-                            {modelReadiness?.available ? "Approve + Run Audit" : "Audit Unavailable"}
-                          </button>
-                        ) : null}
-                      </div>
+                      <h3 className="text-lg font-semibold text-white truncate">{job.target.displayName}</h3>
+                      <LifecycleBar job={job} />
                     </div>
-                  </article>
-                );
-              })
+
+                    <div className="flex flex-col items-end gap-2 min-w-[160px]">
+                      <p className="text-xs text-slate-600">{formatTime(job.updatedAt)}</p>
+
+                      {/* Action buttons */}
+                      {job.state === "pending_approval" && (
+                        <div className="flex gap-2">
+                          <button
+                            id={`approve-btn-${job.jobId}`}
+                            disabled={busy}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void approveJob(job);
+                            }}
+                            className="rounded-xl border border-blue-400/30 bg-blue-400/10 px-3 py-2 text-sm font-medium text-blue-200 transition hover:bg-blue-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            id={`approve-run-btn-${job.jobId}`}
+                            disabled={busy || !modelReadiness?.available}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void approveAndRun(job);
+                            }}
+                            className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={!modelReadiness?.available ? modelReadiness?.summary : "Approve and immediately start auditing"}
+                          >
+                            {modelReadiness?.available ? "Approve + Run" : "Model Offline"}
+                          </button>
+                        </div>
+                      )}
+                      {job.state === "approved" && (
+                        <button
+                          id={`run-btn-${job.jobId}`}
+                          disabled={busy || !modelReadiness?.available}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runAudit(job);
+                          }}
+                          className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          title={!modelReadiness?.available ? modelReadiness?.summary : "Start the audit"}
+                        >
+                          {modelReadiness?.available ? "▶ Run Audit" : "Model Offline"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </article>
+              ))
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
-                No targets are queued yet. Submit a repository or Immunefi-style identifier above to start the approval flow.
+                No targets are queued yet. Submit a repository or Immunefi identifier above to start the golden path.
               </article>
+            )}
+
+            {/* Failed jobs */}
+            {failedJobs.length > 0 && (
+              <>
+                <div className="flex items-center gap-3 mt-4">
+                  <h3 className="text-base font-semibold text-red-300">Failed</h3>
+                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-300">
+                    {failedJobs.length}
+                  </span>
+                </div>
+                {failedJobs.slice(0, 5).map((job) => (
+                  <article
+                    key={job.jobId}
+                    className="rounded-2xl border border-red-500/15 bg-slate-900/70 p-4 cursor-pointer hover:border-red-500/30 transition"
+                    onClick={() => setSelectedJob(job)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-sm font-medium text-white">{job.target.displayName}</h4>
+                        <p className="mt-1 text-xs text-red-400">{job.error ?? "Unknown error"}</p>
+                      </div>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${stateTone("failed")}`}>
+                        failed
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </>
             )}
           </div>
 
+          {/* Results column */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-white">Reviewed Findings</h2>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Published output</p>
+              <h2 className="text-xl font-semibold text-white">Findings</h2>
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                {publishedJobs.length} published · {discardedJobs.length} discarded
+              </p>
             </div>
 
-            {(findings || []).length > 0 ? (
-              (findings || []).slice(0, 6).map((mem, idx) => {
-                const report = mem?.content?.report;
-                const targetRecord = mem?.content?.target;
-                const title = report?.title ?? "Finding";
-                const severity = String(report?.severity ?? "high").toLowerCase();
-                const severityTone =
-                  severity === "critical"
-                    ? "border-red-500/30 bg-red-500/10 text-red-300"
-                    : severity === "high"
-                      ? "border-orange-500/30 bg-orange-500/10 text-orange-300"
-                      : "border-amber-500/30 bg-amber-500/10 text-amber-300";
-                const description = report?.description ?? extractText(mem);
-
-                return (
-                  <article
-                    key={idx}
-                    className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone}`}>
-                        {severity}
-                      </span>
-                      <span className="text-xs text-slate-500">{targetRecord?.displayName ?? ""}</span>
+            {publishedJobs.length > 0 ? (
+              publishedJobs.slice(0, 8).map((job) => (
+                <article
+                  key={job.jobId}
+                  className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30 cursor-pointer hover:border-emerald-400/20 transition"
+                  onClick={() => setSelectedJob(job)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "high")}`}>
+                      {job.report?.severity ?? "high"}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {job.verdict && (
+                        <span className="text-xs text-emerald-400">
+                          {Math.round(job.verdict.confidence * 100)}%
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-500">{job.target.displayName}</span>
                     </div>
-                    <h3 className="mt-4 text-lg font-semibold text-white">{title}</h3>
-                    <p className="mt-3 text-sm leading-6 text-slate-400">{description}</p>
-                  </article>
-                );
-              })
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold text-white">
+                    {job.report?.title ?? "Finding"}
+                  </h3>
+                  <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
+                    {job.report?.description ?? ""}
+                  </p>
+                  {job.verdict && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <div className="h-1 flex-1 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                          style={{ width: `${Math.round(job.verdict.confidence * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                        reviewer confidence
+                      </span>
+                    </div>
+                  )}
+                </article>
+              ))
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
-                Published findings will appear here after approval, audit, and review all complete successfully.
+                Published findings will appear here after a target completes the full golden path: submit → approve → audit → review.
               </article>
+            )}
+
+            {/* Discarded findings */}
+            {discardedJobs.length > 0 && (
+              <>
+                <div className="flex items-center gap-3 mt-4">
+                  <h3 className="text-base font-semibold text-slate-400">Discarded by Reviewer</h3>
+                  <span className="rounded-full border border-slate-500/30 bg-slate-500/10 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                    {discardedJobs.length}
+                  </span>
+                </div>
+                {discardedJobs.slice(0, 4).map((job) => (
+                  <article
+                    key={job.jobId}
+                    className="rounded-2xl border border-white/5 bg-slate-900/50 p-4 cursor-pointer hover:border-white/10 transition opacity-70"
+                    onClick={() => setSelectedJob(job)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-sm font-medium text-slate-300">
+                          {job.report?.title ?? job.target.displayName}
+                        </h4>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {job.verdict?.rationale?.slice(0, 100)}…
+                        </p>
+                      </div>
+                      <span className="text-xs text-slate-600">
+                        {job.verdict ? `${Math.round(job.verdict.confidence * 100)}%` : ""}
+                      </span>
+                    </div>
+                  </article>
+                ))}
+              </>
             )}
           </div>
         </section>

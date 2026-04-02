@@ -13,3 +13,4 @@ export { uiBridgePlugin } from "./plugins/plugin-ui-bridge/index.js";
 // Pipeline modules
 export * from "./pipeline/types.js";
 export * from "./pipeline/jobStore.js";
+export * from "./pipeline/ingestion.js";

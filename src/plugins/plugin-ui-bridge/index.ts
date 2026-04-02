@@ -1,8 +1,10 @@
 import type { Plugin, Route } from "@elizaos/core";
 import { logger } from "@elizaos/core";
 import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
+import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 import { getIntegrationReadiness, getReadinessSnapshot } from "../../readiness.js";
+import type { IngestionResult } from "../../pipeline/types.js";
 import {
   createJob,
   findApprovedJob,
@@ -12,6 +14,7 @@ import {
   jobStats,
   listJobs,
   transitionJob,
+  updateJobData,
 } from "../../pipeline/jobStore.js";
 
 function json(res: any, status: number, body: any) {
@@ -170,13 +173,28 @@ const runAuditRoute: Route = {
       // Transition to scanning
       transitionJob(job.jobId, "scanning");
 
+      // --- INGESTION: clone repo or read local folder ---
+      let ingestion: IngestionResult | undefined;
+      try {
+        if (job.target.type === "github" || job.target.type === "local") {
+          ingestion = await ingestTarget(job.target);
+          // Store ingestion metadata on the job
+          updateJobData(job.jobId, { ingestion });
+        }
+      } catch (ingestionErr: any) {
+        // Ingestion failure is not fatal — we can still try to audit without code
+        logger.warn(`[UIBridge] Ingestion failed for ${job.target.displayName}: ${ingestionErr?.message}`);
+      }
+
       let report;
       try {
         report = await runAudit(runtime, {
           target: job.target,
           scopeContext: job.scoutData,
+          ingestion,
         });
       } catch (auditErr: any) {
+        if (ingestion) cleanupIngestion(ingestion);
         transitionJob(job.jobId, "failed", {
           error: `Audit error: ${auditErr?.message ?? auditErr}`,
         });
@@ -197,8 +215,10 @@ const runAuditRoute: Route = {
           target: job.target,
           report,
           scopeContext: job.scoutData,
+          ingestion,
         });
       } catch (reviewErr: any) {
+        if (ingestion) cleanupIngestion(ingestion);
         transitionJob(job.jobId, "failed", {
           error: `Review error: ${reviewErr?.message ?? reviewErr}`,
         });
@@ -208,6 +228,9 @@ const runAuditRoute: Route = {
           jobId: job.jobId,
         });
       }
+
+      // Cleanup cloned repos after audit+review completes
+      if (ingestion) cleanupIngestion(ingestion);
 
       await writeReview(runtime, { roomId, userId, target: job.target, report, verdict });
 

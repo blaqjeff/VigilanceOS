@@ -1,5 +1,5 @@
 import { logger } from "@elizaos/core";
-import type { AuditJob, AuditJobState, AuditReport, ReviewerVerdict, Target } from "./types.js";
+import type { AuditJob, AuditJobState, AuditReport, IngestionResult, ReviewerVerdict, Target } from "./types.js";
 import { simpleHash, nowIso } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,7 @@ export function createJob(
 }
 
 export type TransitionOptions = {
+  ingestion?: IngestionResult;
   report?: AuditReport;
   verdict?: ReviewerVerdict;
   error?: string;
@@ -85,6 +86,7 @@ export function transitionJob(
   job.state = to;
   job.updatedAt = now;
 
+  if (options?.ingestion) job.ingestion = options.ingestion;
   if (options?.report) job.report = options.report;
   if (options?.verdict) job.verdict = options.verdict;
   if (options?.error) job.error = options.error;
@@ -93,6 +95,29 @@ export function transitionJob(
     `[JobStore] Job ${jobId} transitioned to ${to}` +
       (options?.error ? ` (error: ${options.error})` : "")
   );
+  return clone(job);
+}
+
+/**
+ * Update data fields on a job without changing its state.
+ * Useful for attaching ingestion results, etc. after a transition.
+ */
+export function updateJobData(
+  jobId: string,
+  data: Partial<Pick<AuditJob, "ingestion" | "report" | "verdict" | "error" | "scoutData">>
+): AuditJob {
+  const job = jobs.get(jobId);
+  if (!job) {
+    throw new Error(`[JobStore] Job not found: ${jobId}`);
+  }
+
+  if (data.ingestion !== undefined) job.ingestion = data.ingestion;
+  if (data.report !== undefined) job.report = data.report;
+  if (data.verdict !== undefined) job.verdict = data.verdict;
+  if (data.error !== undefined) job.error = data.error;
+  if (data.scoutData !== undefined) job.scoutData = data.scoutData;
+
+  job.updatedAt = nowIso();
   return clone(job);
 }
 

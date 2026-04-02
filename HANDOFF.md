@@ -238,73 +238,137 @@ Done when:
 - ✅ Every audit has a clear lifecycle
 - ✅ UI and backend no longer infer state from ad hoc text blobs where structured state would be better
 
-### 3. Make the golden path solid
+### 3. Make the golden path solid — ✅ COMPLETED
 
 Goal:
 
 Make the single most important workflow feel trustworthy and complete.
 
-What to do:
+Implementation summary:
 
-- UI target submission works reliably
-- Approval gate is explicit and enforced
-- Audit starts only after approval
-- Review step always runs
-- Final report is persisted and retrievable
-- Failure states are visible and understandable
+- Completely rewrote `ui/src/app/page.tsx` to drive the golden path through the JobStore API
+- UI now calls `/vigilance/jobs` for all state instead of parsing raw memory text blobs
+- Added `/api/vigilance/jobs/route.ts` proxy for the new backend endpoint
+- **Explicit approval gate**: Pending jobs show separate "Approve" and "Approve + Run" buttons
+- **Approved state is visible**: Approved-but-not-yet-audited jobs show "▶ Run Audit" button
+- **Live pipeline visibility**: Scanning/reviewing jobs show pulsing animation and progress indicator
+- **Job detail modal**: Click any job to see full report, verdict, confidence bar, PoC, affected surface, recommendations, and complete state history timeline
+- **Failure states**: Failed jobs shown in a dedicated section with error messages
+- **Discarded findings**: Reviewer-rejected findings appear separately from published ones
+- **Stats badges**: Header shows live counts (pending, active, published)
+- **Lifecycle progress bar**: Visual dot-and-line indicator on every job card showing progress through the pipeline
+- Both backend (`tsc`) and UI (`next build`) verified clean — exit 0
 
 Done when:
 
-- A user can run the full path from UI submission to final reviewed report without handholding
+- ✅ A user can run the full path from UI submission to final reviewed report without handholding
 
-### 4. Implement real target ingestion in this order
+### 4. Implement real target ingestion in this order — ✅ COMPLETED
 
 Implementation order:
 
-1. Public GitHub URL
-2. Local folder path
-3. Zip upload
-4. Private GitHub authentication later
+1. ✅ Public GitHub URL — shallow-cloned via `git clone --depth 1`
+2. ✅ Local folder path — direct filesystem read with validation
+3. Zip upload — future
+4. Private GitHub authentication — future
 
 Why this order:
 
 It maximizes truthfulness and speed while minimizing auth complexity.
 
-What to do:
+Implementation summary:
 
-- Normalize target descriptors
-- Validate and classify target types
-- Support local path scanning without breaking portability
-- Build clean ingestion interfaces so private auth can be added later
+- Created `src/pipeline/ingestion.ts` — core ingestion module with:
+  - **GitHub cloning**: shallow clone (`depth 1`) into `.vigilance-work/` directory
+  - **Local folder reading**: validates path exists and is a directory
+  - **File walker**: recursively walks source tree, ignores `node_modules`, `.git`, `target`, etc.
+  - **Language classification**: `.sol` → solidity, `.rs` → rust, `.ts/.js` → typescript/javascript, `.py` → python, `.move` → move
+  - **Target categorization**: auto-classifies as `solana_rust`, `solidity_evm`, `web_app`, `mixed`, or `unknown`
+  - **Priority ranking**: files scored by relevance (smart contracts/programs highest), selects top 40 files / 200KB
+  - **Truncation**: files > 32KB are truncated with `// ... [truncated]` marker
+  - **Cleanup**: `cleanupIngestion()` removes cloned repos after audit+review
+- Updated `src/pipeline/types.ts` with `TargetType: "local"`, `TargetCategory`, `SourceFile`, `IngestionResult`, `AuditJob.ingestion`
+- Updated `src/pipeline/audit.ts` with:
+  - `targetFromInput()`: now handles local paths (`C:\...`, `/...`) as `type: "local"`
+  - Category-aware specialist prompts (Solana/Rust, Solidity/EVM, Web/App)
+  - `buildCodeContext()`: feeds real source files into LLM prompts with file path, language, and truncation metadata
+  - PoC framework auto-selected (anchor for Solana, foundry for Solidity, generic for others)
+- Updated `src/pipeline/jobStore.ts` with `updateJobData()` for non-state data updates (ingestion)
+- Updated `plugin-ui-bridge` and `plugin-auditor-reviewer` to perform ingestion during audit flow
+- Added `VIGILANCE_WORK_DIR` to `.env.example`
+- Added `.vigilance-work/` to `.gitignore`
+- Both builds verified clean (tsc + next build, exit 0)
 
 Done when:
 
-- The backend can ingest the first two target types reliably and pass them into the same audit lifecycle
+- ✅ The backend can ingest the first two target types reliably and pass them into the same audit lifecycle
 
-### 5. Build real Solana / Rust audit depth first
+### 5. Build real Solana / Rust audit depth first — ✅ COMPLETED
 
 Goal:
 
 Make Solana / Rust the strongest submission-day wedge.
 
-Priority classes:
+Priority classes (all implemented):
 
-- oracle/accounting logic
-- account ownership validation
-- signer/authority mistakes
-- PDA misuse
-- CPI privilege escalation
+- ✅ oracle/accounting logic
+- ✅ account ownership validation
+- ✅ signer/authority mistakes
+- ✅ PDA misuse
+- ✅ CPI privilege escalation
+- ✅ bonus: reinitialization, integer overflow, arbitrary close
 
-What to do:
+Implementation summary:
 
-- Build analyzers/prompts/workflows around these classes specifically
-- Prefer grounded repo reasoning over generic LLM brainstorming
-- Capture exact files, functions, accounts, authorities, and call paths
-- Generate reproductions or harnesses where feasible
+- Created `src/analyzers/solana.ts` — **Solana/Anchor static analyzer** with pattern-matching detectors for all 5 priority classes:
+
+  **1. Oracle / Accounting Logic (`oracle_accounting`)**
+  - Arithmetic on price/balance without `checked_` math
+  - Oracle reads (Pyth/Switchboard) without staleness/confidence checks
+  - Division before multiplication (precision loss)
+  - Unchecked subtraction on balance fields (underflow risk)
+
+  **2. Account Ownership Validation (`ownership_validation`)**
+  - `UncheckedAccount` / `AccountInfo` without owner verification
+  - Deserialization (`try_from_slice`, `unpack`) without prior owner check
+  - `#[account(...)]` blocks missing `owner=` or `constraint=` on data accounts
+  - Anchor struct analysis for missing constraints
+
+  **3. Signer / Authority Mistakes (`signer_authority`)**
+  - State-mutating functions (`transfer`, `withdraw`, `close`) without signer check
+  - Authority/admin as `AccountInfo` without `has_one=` validation
+  - `#[account(mut)]` on authority-like fields without `signer` flag
+
+  **4. PDA Derivation and Seed Misuse (`pda_misuse`)**
+  - `find_program_address` without bump storage
+  - `create_program_address` (non-canonical bump attack vector)
+  - `seeds=` without `bump=` constraint
+  - Seed collision: static-only seeds without user-specific components
+
+  **5. CPI Privilege Escalation (`cpi_escalation`)**
+  - `invoke()` / `invoke_signed()` with unvalidated target program ID
+  - `CpiContext::new()` with unvalidated program account
+  - Signer seeds forwarded to CPI (authority scope bleed)
+
+  **Bonus: reinitialization, integer_overflow, arbitrary_close**
+
+- Created `src/analyzers/solana-poc.ts` — **Anchor PoC template generator**:
+  - Generates Anchor TypeScript test harnesses per vulnerability class
+  - Templates include setup/exploit/assert scaffolding with TODO markers
+  - PoC references specific affected files from static analysis signals
+
+- Updated `src/pipeline/audit.ts`:
+  - **Enhanced Solana audit prompt**: 70-line specialist prompt with detailed sub-patterns for each class, evidence standard, and Solana account model context
+  - **Static analysis → LLM pipeline**: analyzer runs first, grounded signals injected into prompt as primary evidence, LLM develops the most exploitable signal into a complete finding
+  - **PoC fallback**: if LLM produces a generic PoC, the pre-generated Anchor template is used instead
+  - **Enhanced Solana reviewer**: Solana-specific false positive checks (Anchor auto-validation, init_if_needed safety, Program<T> CPI safety, debug vs release overflow behavior)
+  - **Reviewer receives static analysis independently** for cross-reference verification
+
+- Both builds verified clean (tsc + next build, exit 0)
 
 Done when:
 
-- The engine can produce defensible findings in these classes against controlled or suitable public targets
+- ✅ The engine can produce defensible findings in these classes against controlled or suitable public targets
 
 ### 6. Build Solidity / EVM audit depth second
 
