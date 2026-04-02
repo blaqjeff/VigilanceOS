@@ -7,11 +7,16 @@ import {
   HandlerCallback,
   HandlerOptions,
   ActionResult,
-  MemoryType,
   logger,
 } from "@elizaos/core";
+import { targetFromInput } from "../../pipeline/audit.js";
 import { createDocumentMemory } from "../../pipeline/memory.js";
 import { getIntegrationReadiness } from "../../readiness.js";
+import {
+  createJob,
+  getJobByTargetId,
+  transitionJob,
+} from "../../pipeline/jobStore.js";
 
 type ScoutData = {
   scoutMode: "DEMO" | "LIVE";
@@ -47,18 +52,50 @@ function safeJsonParse<T = unknown>(raw: string): T | null {
   }
 }
 
+/**
+ * Create or retrieve a job for a discovered target.
+ */
+function ensureJobForTarget(
+  projectName: string,
+  scoutData: ScoutData
+): { jobId: string; isNew: boolean } {
+  const target = targetFromInput(projectName);
+  const existing = getJobByTargetId(target.targetId);
+  if (existing) {
+    return { jobId: existing.jobId, isNew: false };
+  }
+
+  const job = createJob(target, scoutData as Record<string, unknown>);
+  // Move to pending_approval so it shows up in the HITL queue
+  transitionJob(job.jobId, "pending_approval");
+  return { jobId: job.jobId, isNew: true };
+}
+
 export const scoutAction: Action = {
   name: "SCOUT_IMMUNEFI",
   description: "Scans Immunefi for bug bounty programs based on specified categories or projects.",
   similes: ["SCAN_BOUNTIES", "CHECK_IMMUNEFI", "FIND_TARGETS"],
-  validate: async (runtime: IAgentRuntime, message: Memory, state?: State): Promise<boolean> => {
+  validate: async (
+    _runtime: IAgentRuntime,
+    _message: Memory,
+    _state?: State
+  ): Promise<boolean> => {
     return true;
   },
-  handler: async (runtime: IAgentRuntime, message: Memory, state?: State, options?: HandlerOptions, callback?: HandlerCallback): Promise<ActionResult> => {
-    // 1. Check for DEMO_MODE in environment
-    const isDemoMode = process.env.DEMO_MODE === 'true';
+  handler: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+    state?: State,
+    _options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
+    const roomId = (message as any).roomId;
+    const userId = (message as any).userId;
+
+    // 1. DEMO_MODE
+    const isDemoMode = process.env.DEMO_MODE === "true";
     if (isDemoMode) {
-      console.log("[Scout] DEMO MODE DETECTED: Utilizing Damn Vulnerable DeFi local target.");
+      logger.info("[Scout] DEMO MODE DETECTED: Utilizing Damn Vulnerable DeFi local target.");
       const scoutData: ScoutData = {
         scoutMode: "DEMO",
         query: message.content?.text || "DeFi protocols",
@@ -71,21 +108,24 @@ export const scoutAction: Action = {
         githubRepositories: [],
       };
 
-      const reportText = `SCOUT REPORT (DEMO): Found Immunefi-like scope for '${scoutData.projectName}'. High/Critical payouts valid. Injecting structured rules into RAG memory...`;
+      const { jobId, isNew } = ensureJobForTarget(scoutData.projectName, scoutData);
 
-      // Persist structured context for HITL/Auditor downstream.
+      const reportText = [
+        `SCOUT REPORT (DEMO): Found Immunefi-like scope for '${scoutData.projectName}'.`,
+        `High/Critical payouts valid. Job: ${jobId}${isNew ? " (new)" : " (existing)"}.`,
+      ].join(" ");
+
       try {
         await createDocumentMemory(runtime, {
-          roomId: (message as any).roomId,
-          userId: (message as any).userId,
+          roomId,
+          userId,
           text: reportText,
-          content: {
-            scoutData,
-          },
+          content: { scoutData },
           metadata: {
             stage: "scout",
             scoutMode: scoutData.scoutMode,
             projectName: scoutData.projectName,
+            jobId,
           },
         });
       } catch (e) {
@@ -93,12 +133,12 @@ export const scoutAction: Action = {
       }
 
       if (callback) await callback({ text: reportText, action: "SCOUT_COMPLETE" });
-      return { success: true, text: reportText, values: { scoutData } } as any;
+      return { success: true, text: reportText, values: { scoutData, jobId } } as any;
     }
 
-    // 2. Attempt connection to infosec-us-team/immunefi-mcp (via the configured MCP plugin)
+    // 2. Live Immunefi MCP
     const targetQuery = (message.content as any)?.text || "DeFi protocols";
-    console.log(`[Scout] Engaging Immunefi MCP for target analysis: ${targetQuery}`);
+    logger.info(`[Scout] Engaging Immunefi MCP for target analysis: ${targetQuery}`);
 
     const immunefiReadiness = getIntegrationReadiness("immunefiMcp");
     if (!immunefiReadiness.available) {
@@ -120,12 +160,6 @@ export const scoutAction: Action = {
       return { success: false, text: errText } as any;
     }
 
-    // MCP tools:
-    // - search_program(query: str)
-    // - get_impacts(project_ids: List[str])
-    // - get_rewards(project_ids: List[str])
-    // - get_max_bounty(project_ids: List[str])
-    // - search_github_repos(project_ids: List[str])
     const searchRes = await mcpService.callTool("immunefi", "search_program", {
       query: targetQuery,
     });
@@ -150,7 +184,7 @@ export const scoutAction: Action = {
       return { success: false, text: errText } as any;
     }
 
-    // Pull additional context for HITL + Auditor.
+    // Pull additional context
     const [impactsRes, rewardsRes, maxBountyRes, reposRes] = await Promise.all([
       mcpService.callTool("immunefi", "get_impacts", { project_ids: [firstProjectId] }),
       mcpService.callTool("immunefi", "get_rewards", { project_ids: [firstProjectId] }),
@@ -163,7 +197,6 @@ export const scoutAction: Action = {
     const maxBountyJson = safeJsonParse<any>(extractToolText(maxBountyRes));
     const reposJson = safeJsonParse<any>(extractToolText(reposRes));
 
-    // The MCP server returns { result: [...] } for these tools.
     const impactsEntry = impactsJson?.result?.[0];
     const rewardsEntry = rewardsJson?.result?.[0];
     const maxBountyEntry = maxBountyJson?.result?.[0];
@@ -173,15 +206,20 @@ export const scoutAction: Action = {
       scoutMode: "LIVE",
       query: targetQuery,
       projectId: firstProjectId,
-      projectName:
-        firstProjectId,
-      // Keep these as-is; downstream (UI/HITL) can format consistently.
+      projectName: firstProjectId,
       impactsInScope: impactsEntry?.impacts ?? impactsJson,
       impactsOutOfScope: undefined,
       rewards: rewardsEntry?.rewards ?? rewardsJson,
-      maxBounty: maxBountyEntry?.max_bounty ?? maxBountyEntry?.maxBounty ?? maxBountyJson,
-      githubRepositories: reposEntry?.github_repositories ?? reposEntry?.githubRepos ?? [],
+      maxBounty:
+        maxBountyEntry?.max_bounty ?? maxBountyEntry?.maxBounty ?? maxBountyJson,
+      githubRepositories:
+        reposEntry?.github_repositories ?? reposEntry?.githubRepos ?? [],
     };
+
+    const { jobId, isNew } = ensureJobForTarget(
+      scoutData.projectId || scoutData.projectName,
+      scoutData
+    );
 
     const projectNameLabel = scoutData.projectId || scoutData.projectName;
     const rewardLabel =
@@ -196,22 +234,21 @@ export const scoutAction: Action = {
       `Target: ${projectNameLabel}`,
       `Scope extracted into memory (impacts + rewards).`,
       `Reward: ${rewardLabel}.`,
+      `Job: ${jobId}${isNew ? " (new)" : " (existing)"}.`,
     ].join("\n");
 
-    // Persist structured context for downstream agents.
     try {
       await createDocumentMemory(runtime, {
-        roomId: (message as any).roomId,
-        userId: (message as any).userId,
+        roomId,
+        userId,
         text: reportText,
-        content: {
-          scoutData,
-        },
+        content: { scoutData },
         metadata: {
           stage: "scout",
           scoutMode: scoutData.scoutMode,
           projectId: scoutData.projectId,
           projectName: projectNameLabel,
+          jobId,
         },
       });
     } catch (e) {
@@ -219,20 +256,30 @@ export const scoutAction: Action = {
     }
 
     if (callback) await callback({ text: reportText, action: "SCOUT_COMPLETE" });
-    return { success: true, text: reportText, values: { scoutData } } as any;
+    return { success: true, text: reportText, values: { scoutData, jobId } } as any;
   },
   examples: [
     [
-      { name: "{{user1}}", content: { text: "Find me a new smart contract bounty on Immunefi." } },
-      { name: "Scout", content: { text: "Scanning Immunefi for smart contract bounties...", action: "SCOUT_IMMUNEFI" } }
-    ]
-  ]
+      {
+        name: "{{user1}}",
+        content: { text: "Find me a new smart contract bounty on Immunefi." },
+      },
+      {
+        name: "Scout",
+        content: {
+          text: "Scanning Immunefi for smart contract bounties...",
+          action: "SCOUT_IMMUNEFI",
+        },
+      },
+    ],
+  ],
 };
 
 export const scoutPlugin: Plugin = {
   name: "ImmunefiScout",
-  description: "Discovers and extracts rules for bug bounties from Immunefi.",
+  description:
+    "Discovers and extracts rules for bug bounties from Immunefi. Creates jobs in the canonical JobStore.",
   actions: [scoutAction],
   evaluators: [],
-  providers: []
+  providers: [],
 };

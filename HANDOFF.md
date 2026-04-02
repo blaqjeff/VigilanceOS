@@ -216,24 +216,27 @@ Done when:
 - A developer can boot the stack and immediately know which integrations are healthy
 - There is no ambiguity about why Scout, Telegram, or model features are unavailable
 
-### 2. Lock the audit job lifecycle end to end
+### 2. Lock the audit job lifecycle end to end — ✅ COMPLETED
 
 Goal:
 
 Define one canonical state model for all work.
 
-What to do:
+Implementation summary:
 
-- Normalize job states such as `submitted`, `pending_approval`, `approved`, `scanning`, `reviewing`, `published`, `discarded`, `failed`
-- Persist artifacts cleanly
-- Persist report, verdict, confidence, target metadata, and timestamps
-- Ensure the UI and Telegram speak the same lifecycle language
-- Make state transitions deterministic and debuggable
+- Created `AuditJob` type with canonical states: `submitted`, `pending_approval`, `approved`, `scanning`, `reviewing`, `published`, `discarded`, `failed`
+- Built `src/pipeline/jobStore.ts` — in-memory state machine with validated transitions, full `stateHistory` with timestamps
+- All plugins updated to use JobStore: `plugin-ui-bridge`, `plugin-hitl`, `plugin-auditor-reviewer`, `plugin-scout`
+- Added `GET /vigilance/jobs` and `GET /vigilance/jobs/:jobId` API routes
+- Feed and findings routes now return structured job data instead of memory text blobs
+- Report, verdict, confidence, target metadata, and timestamps all stored on the `AuditJob`
+- Invalid state transitions throw errors; every transition is logged with `[JobStore]` prefix
+- Build verified clean (tsc exit 0)
 
 Done when:
 
-- Every audit has a clear lifecycle
-- UI and backend no longer infer state from ad hoc text blobs where structured state would be better
+- ✅ Every audit has a clear lifecycle
+- ✅ UI and backend no longer infer state from ad hoc text blobs where structured state would be better
 
 ### 3. Make the golden path solid
 

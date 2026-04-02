@@ -7,165 +7,195 @@ import {
   HandlerCallback,
   HandlerOptions,
   ActionResult,
-  MemoryType,
   logger,
 } from "@elizaos/core";
-import { createDocumentMemory } from "../../pipeline/memory.js";
+import { targetFromInput } from "../../pipeline/audit.js";
+import {
+  createJob,
+  findPendingJob,
+  getJobByTargetId,
+  transitionJob,
+} from "../../pipeline/jobStore.js";
 
 function extractScoutData(state?: State): any | null {
   const s = state as any;
   return s?.scoutData ?? s?.values?.scoutData ?? s?.data?.scoutData ?? null;
 }
 
-function roomIdFromMessage(message: Memory): any {
-  return (message as any).roomId;
+function resolveTargetInput(message: Memory, state?: State): string {
+  const scoutData = extractScoutData(state);
+  return String(
+    scoutData?.projectId ??
+      scoutData?.projectName ??
+      (message.content as any)?.text ??
+      "Unknown Target"
+  );
 }
 
-function userIdFromMessage(message: Memory): any {
-  return (message as any).userId;
-}
-
-function extractTargetIdFromText(text?: string): string | undefined {
-  if (!text) return undefined;
-  const match = text.match(/TARGET_ID:([^\s]+)/);
-  return match?.[1];
-}
-
+// ---------------------------------------------------------------------------
+// REQUEST_APPROVAL — create/advance job to pending_approval
+// ---------------------------------------------------------------------------
 export const requestApprovalAction: Action = {
   name: "REQUEST_APPROVAL",
-  description: "Triggers a Human-In-The-Loop gate by sending an alert to the user's Telegram and pausing execution until approved.",
+  description:
+    "Triggers a Human-In-The-Loop gate by sending an alert to the user's Telegram and pausing execution until approved.",
   similes: ["ASK_USER", "AWAIT_APPROVAL", "PAUSE_AND_PING_USER"],
-  validate: async (runtime: IAgentRuntime, message: Memory, state?: State): Promise<boolean> => {
+  validate: async (
+    _runtime: IAgentRuntime,
+    _message: Memory,
+    _state?: State
+  ): Promise<boolean> => {
     return true;
   },
-  handler: async (runtime: IAgentRuntime, message: Memory, state?: State, options?: HandlerOptions, callback?: HandlerCallback): Promise<ActionResult> => {
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    state?: State,
+    _options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
     const scoutData = extractScoutData(state);
-    const targetDetails =
-      scoutData?.projectName ??
-      scoutData?.projectId ??
-      (state as Record<string, unknown>)?.scoutData ??
-      (message.content as any)?.text ??
-      "Unknown Target";
-    const targetId = String(scoutData?.projectId ?? scoutData?.projectName ?? targetDetails);
+    const targetInput = resolveTargetInput(message, state);
+    const target = targetFromInput(targetInput);
 
-    const pendingText = `HITL_STAGE:PENDING TARGET_ID:${targetId}\nTarget: ${targetDetails}\nType: Pending Review. Reply with /approve to proceed.`;
+    // Check if a job already exists for this target
+    let job = getJobByTargetId(target.targetId);
 
-    try {
-      await createDocumentMemory(runtime, {
-        roomId: roomIdFromMessage(message),
-        userId: userIdFromMessage(message),
-        text: pendingText,
-        content: {
-          scoutData,
-        },
-        metadata: {
-          stage: "hitl",
-          status: "PENDING",
-          targetId,
-        },
-      });
-    } catch (e) {
-      logger.warn(`[HITL] Failed to persist pending approval: ${e}`);
+    if (!job) {
+      // Create a new job
+      job = createJob(target, scoutData);
+      job = transitionJob(job.jobId, "pending_approval");
+    } else if (job.state === "submitted") {
+      job = transitionJob(job.jobId, "pending_approval");
+    } else {
+      logger.info(
+        `[HITL] Job ${job.jobId} already in state '${job.state}', skipping approval request.`
+      );
     }
 
-    const alertMessage = `🚨 **Human Approval Required** 🚨\nTarget: ${targetDetails}\n\nReply with \`/approve\` to proceed with full auditor scan.`;
+    const alertMessage = [
+      `🚨 **Human Approval Required** 🚨`,
+      `Target: ${target.displayName}`,
+      `Job: ${job.jobId}`,
+      ``,
+      `Reply with \`/approve\` to proceed with full auditor scan.`,
+    ].join("\n");
 
     if (callback) {
       await callback({ text: alertMessage, action: "WAITING_FOR_APPROVAL" });
     }
 
-    return { success: true, text: alertMessage, values: { scoutData, targetId } } as any;
+    return {
+      success: true,
+      text: alertMessage,
+      values: { scoutData, targetId: target.targetId, jobId: job.jobId },
+    } as any;
   },
   examples: [
     [
       { name: "Scout", content: { text: "I have identified a target." } },
-      { name: "System", content: { text: "Requesting human approval...", action: "REQUEST_APPROVAL" } }
-    ]
-  ]
+      {
+        name: "System",
+        content: {
+          text: "Requesting human approval...",
+          action: "REQUEST_APPROVAL",
+        },
+      },
+    ],
+  ],
 };
 
+// ---------------------------------------------------------------------------
+// APPROVE_TARGET — transition job from pending_approval → approved
+// ---------------------------------------------------------------------------
 export const approveAction: Action = {
   name: "APPROVE_TARGET",
   description: "User issues approval to execute the auditor process.",
   similes: ["/approve", "PROCEED", "GO_AHEAD"],
-  validate: async (runtime: IAgentRuntime, message: Memory, state?: State): Promise<boolean> => {
+  validate: async (
+    _runtime: IAgentRuntime,
+    _message: Memory,
+    _state?: State
+  ): Promise<boolean> => {
     return true;
   },
-  handler: async (runtime: IAgentRuntime, message: Memory, state?: State, options?: HandlerOptions, callback?: HandlerCallback): Promise<ActionResult> => {
-    const scoutData = extractScoutData(state);
-    const targetDetails =
-      scoutData?.projectName ??
-      scoutData?.projectId ??
-      (state as any)?.scoutData ??
-      (message.content as any)?.text ??
-      "Unknown Target";
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    state?: State,
+    _options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
+    const targetInput = resolveTargetInput(message, state);
+    const target = targetFromInput(targetInput);
 
-    const explicitTargetId: string | undefined = scoutData?.projectId
-      ? String(scoutData.projectId)
-      : scoutData?.projectName
-        ? String(scoutData.projectName)
-        : undefined;
+    // Find a pending job for this target
+    let job = findPendingJob(target.targetId);
 
-    const roomId = roomIdFromMessage(message);
-    const userId = userIdFromMessage(message);
-
-    // Find the latest pending approval in this room.
-    const pendingQuery = "HITL_STAGE:PENDING";
-    const pendingMemories: any[] = (await (runtime as any).searchMemories?.({
-      query: pendingQuery,
-      type: MemoryType.DOCUMENT,
-      roomId,
-      limit: 10,
-    })) as any[];
-
-    const sorted = (pendingMemories || []).sort(
-      (a, b) => (b?.createdAt?.getTime?.() ?? 0) - (a?.createdAt?.getTime?.() ?? 0)
-    );
-    const bestPending = sorted[0] as any | undefined;
-    const pendingText = bestPending?.content?.text ?? bestPending?.content?.[0]?.text ?? bestPending?.text;
-
-    const foundTargetId = extractTargetIdFromText(pendingText) ?? explicitTargetId;
-    const finalTargetId = foundTargetId ?? explicitTargetId ?? String(targetDetails);
-    const finalScoutData = scoutData ?? bestPending?.content?.scoutData ?? null;
-
-    try {
-      await createDocumentMemory(runtime, {
-        roomId,
-        userId,
-        text: `HITL_STAGE:APPROVED TARGET_ID:${finalTargetId}\nTarget: ${targetDetails}\nApproved by user.`,
-        content: {
-          scoutData: finalScoutData,
-        },
-        metadata: {
-          stage: "hitl",
-          status: "APPROVED",
-          targetId: finalTargetId,
-        },
-      });
-    } catch (e) {
-      logger.warn(`[HITL] Failed to persist approval: ${e}`);
+    if (!job) {
+      // Maybe they passed a jobId explicitly
+      const scoutData = extractScoutData(state);
+      const explicitJobId = (scoutData as any)?.jobId;
+      if (explicitJobId) {
+        const { getJob } = await import("../../pipeline/jobStore.js");
+        job = getJob(explicitJobId);
+      }
     }
 
-    const confMessage = `✅ **Approved**. Auditor agent can now start deep code analysis for '${targetDetails}'.`;
+    if (!job) {
+      const noJobText =
+        "No pending job found to approve. Submit a target first.";
+      if (callback) await callback({ text: noJobText, action: "NO_PENDING_JOB" });
+      return { success: false, text: noJobText } as any;
+    }
+
+    if (job.state !== "pending_approval") {
+      const wrongState = `Job ${job.jobId} is in state '${job.state}', not awaiting approval.`;
+      if (callback) await callback({ text: wrongState, action: "WRONG_STATE" });
+      return { success: false, text: wrongState } as any;
+    }
+
+    const updatedJob = transitionJob(job.jobId, "approved");
+
+    const confMessage = [
+      `✅ **Approved**. Auditor agent can now start deep code analysis.`,
+      `Target: ${updatedJob.target.displayName}`,
+      `Job: ${updatedJob.jobId} (state: ${updatedJob.state})`,
+    ].join("\n");
 
     if (callback) {
       await callback({ text: confMessage, action: "START_AUDITOR" });
     }
 
-    return { success: true, text: confMessage, values: { scoutData: finalScoutData, targetId: finalTargetId } } as any;
+    return {
+      success: true,
+      text: confMessage,
+      values: {
+        scoutData: updatedJob.scoutData,
+        targetId: updatedJob.target.targetId,
+        jobId: updatedJob.jobId,
+      },
+    } as any;
   },
   examples: [
     [
       { name: "{{user1}}", content: { text: "/approve" } },
-      { name: "System", content: { text: "Approval received. Initializing sequence.", action: "APPROVE_TARGET" } }
-    ]
-  ]
+      {
+        name: "System",
+        content: {
+          text: "Approval received. Initializing sequence.",
+          action: "APPROVE_TARGET",
+        },
+      },
+    ],
+  ],
 };
 
 export const hitlPlugin: Plugin = {
   name: "HumanInTheLoopGate",
-  description: "HITL Gatekeeper requiring explicit Telegram approval to execute compute-heavy tasks.",
+  description:
+    "HITL Gatekeeper requiring explicit approval to execute compute-heavy tasks. Uses the canonical JobStore lifecycle.",
   actions: [requestApprovalAction, approveAction],
   evaluators: [],
-  providers: []
+  providers: [],
 };

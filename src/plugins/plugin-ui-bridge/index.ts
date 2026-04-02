@@ -1,8 +1,18 @@
 import type { Plugin, Route } from "@elizaos/core";
-import { MemoryType, logger } from "@elizaos/core";
+import { logger } from "@elizaos/core";
 import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
-import { createDocumentMemory, writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
+import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 import { getIntegrationReadiness, getReadinessSnapshot } from "../../readiness.js";
+import {
+  createJob,
+  findApprovedJob,
+  findPendingJob,
+  getJob,
+  getJobByTargetId,
+  jobStats,
+  listJobs,
+  transitionJob,
+} from "../../pipeline/jobStore.js";
 
 function json(res: any, status: number, body: any) {
   res.status(status);
@@ -10,7 +20,6 @@ function json(res: any, status: number, body: any) {
 }
 
 function getRoomId(req: any): string {
-  // UI will pass an explicit roomId; otherwise fall back to a stable default.
   return String(req.body?.roomId ?? req.query?.roomId ?? "00000000-0000-0000-0000-000000000000");
 }
 
@@ -19,39 +28,9 @@ function getUserId(req: any): string | undefined {
   return v ? String(v) : undefined;
 }
 
-async function findApproved(runtime: any, roomId: string, targetId: string): Promise<boolean> {
-  const approvals: any[] = (await runtime.searchMemories?.({
-    query: "HITL_STAGE:APPROVED",
-    type: MemoryType.DOCUMENT,
-    roomId,
-    limit: 100,
-  })) as any[];
-  return (approvals || []).some((m) => {
-    const text = m?.content?.text ?? m?.content?.[0]?.text ?? m?.text ?? "";
-    return String(text).includes(`TARGET_ID:${targetId}`);
-  });
-}
-
-async function listByStage(runtime: any, roomId: string, stage: string, limit: number) {
-  const memories: any[] = (await runtime.searchMemories?.({
-    query: `stage:${stage}`,
-    type: MemoryType.DOCUMENT,
-    roomId,
-    limit,
-  })) as any[];
-
-  // searchMemories is fuzzy; fall back to broad query if empty
-  if (!memories || memories.length === 0) {
-    return (await runtime.searchMemories?.({
-      query: stage.toUpperCase(),
-      type: MemoryType.DOCUMENT,
-      roomId,
-      limit,
-    })) as any[];
-  }
-  return memories;
-}
-
+// ---------------------------------------------------------------------------
+// POST /vigilance/targets — submit a new target (creates job)
+// ---------------------------------------------------------------------------
 const createTargetRoute: Route = {
   name: "vigilance-create-target",
   path: "/vigilance/targets",
@@ -74,20 +53,15 @@ const createTargetRoute: Route = {
         githubRepositories: target.url ? [target.url] : [],
       };
 
+      // Create the canonical job
+      const job = createJob(target, scoutData);
+      // Immediately move to pending_approval
+      const updatedJob = transitionJob(job.jobId, "pending_approval");
+
+      // Also persist to ElizaOS memory for backward compat / search
       await writeTarget(runtime, { roomId, userId, target, scoutData });
 
-      // Create a HITL pending record immediately so the UI can show status.
-      await createDocumentMemory(runtime, {
-        roomId,
-        userId,
-        text: `HITL_STAGE:PENDING TARGET_ID:${target.targetId}\nTarget: ${target.displayName}\nType: Pending Review. Reply with /approve to proceed.`,
-        content: {
-          scoutData,
-        },
-        metadata: { stage: "hitl", status: "PENDING", targetId: target.targetId },
-      });
-
-      return json(res, 200, { success: true, data: { target } });
+      return json(res, 200, { success: true, data: { job: updatedJob, target } });
     } catch (e) {
       logger.error(`[UIBridge] create target failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
@@ -95,27 +69,44 @@ const createTargetRoute: Route = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// POST /vigilance/approve — approve a pending target
+// ---------------------------------------------------------------------------
 const approveTargetRoute: Route = {
   name: "vigilance-approve-target",
   path: "/vigilance/approve",
   type: "POST",
   public: true,
-  handler: async (req: any, res: any, runtime: any) => {
+  handler: async (req: any, res: any, _runtime: any) => {
     try {
-      const roomId = getRoomId(req);
-      const userId = getUserId(req);
       const targetId = String(req.body?.targetId ?? "").trim();
-      const targetDisplay = String(req.body?.targetDisplayName ?? targetId);
-      if (!targetId) return json(res, 400, { success: false, error: "targetId is required" });
+      const jobId = String(req.body?.jobId ?? "").trim();
+      if (!targetId && !jobId) {
+        return json(res, 400, { success: false, error: "targetId or jobId is required" });
+      }
 
-      await createDocumentMemory(runtime, {
-        roomId,
-        userId,
-        text: `HITL_STAGE:APPROVED TARGET_ID:${targetId}\nTarget: ${targetDisplay}\nApproved by UI.`,
-        metadata: { stage: "hitl", status: "APPROVED", targetId },
-      });
+      // Find the pending job
+      let pending = jobId ? getJob(jobId) : undefined;
+      if (!pending && targetId) {
+        pending = findPendingJob(targetId);
+      }
 
-      return json(res, 200, { success: true });
+      if (!pending) {
+        return json(res, 404, {
+          success: false,
+          error: "No pending job found for the given target/jobId",
+        });
+      }
+
+      if (pending.state !== "pending_approval") {
+        return json(res, 409, {
+          success: false,
+          error: `Job ${pending.jobId} is in state '${pending.state}', not 'pending_approval'`,
+        });
+      }
+
+      const updatedJob = transitionJob(pending.jobId, "approved");
+      return json(res, 200, { success: true, data: { job: updatedJob } });
     } catch (e) {
       logger.error(`[UIBridge] approve failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
@@ -123,6 +114,9 @@ const approveTargetRoute: Route = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// POST /vigilance/audit — run audit on an approved job
+// ---------------------------------------------------------------------------
 const runAuditRoute: Route = {
   name: "vigilance-run-audit",
   path: "/vigilance/audit",
@@ -132,16 +126,40 @@ const runAuditRoute: Route = {
     try {
       const roomId = getRoomId(req);
       const userId = getUserId(req);
-      const input = String(req.body?.target ?? "").trim();
+      const jobId = String(req.body?.jobId ?? "").trim();
       const targetId = String(req.body?.targetId ?? "").trim();
-      const target = targetId ? targetFromInput(targetId) : input ? targetFromInput(input) : null;
-      if (!target) return json(res, 400, { success: false, error: "target or targetId is required" });
+      const input = String(req.body?.target ?? "").trim();
 
-      const approved = await findApproved(runtime, roomId, target.targetId);
-      if (!approved) return json(res, 403, { success: false, error: "Target not approved (HITL)" });
+      // Resolve the job
+      let job = jobId ? getJob(jobId) : undefined;
+      if (!job && targetId) {
+        job = findApprovedJob(targetId);
+      }
+      if (!job && input) {
+        const target = targetFromInput(input);
+        job = findApprovedJob(target.targetId);
+      }
 
+      if (!job) {
+        return json(res, 404, {
+          success: false,
+          error: "No approved job found. Submit and approve a target first.",
+        });
+      }
+
+      if (job.state !== "approved") {
+        return json(res, 409, {
+          success: false,
+          error: `Job ${job.jobId} is in state '${job.state}', expected 'approved'`,
+        });
+      }
+
+      // Check model readiness
       const modelReadiness = getIntegrationReadiness("model");
       if (!modelReadiness.available) {
+        transitionJob(job.jobId, "failed", {
+          error: `Model unavailable: ${modelReadiness.summary}`,
+        });
         return json(res, 503, {
           success: false,
           error: "Model-backed auditing is unavailable",
@@ -149,16 +167,59 @@ const runAuditRoute: Route = {
         });
       }
 
-      const report = await runAudit(runtime, { target });
-      const verdict = await runReview(runtime, { target, report });
+      // Transition to scanning
+      transitionJob(job.jobId, "scanning");
 
-      await writeAudit(runtime, { roomId, userId, target, report });
-      await writeReview(runtime, { roomId, userId, target, report, verdict });
-      if (verdict.verdict === "publish") {
-        await writeFinding(runtime, { roomId, userId, target, report, verdict });
+      let report;
+      try {
+        report = await runAudit(runtime, {
+          target: job.target,
+          scopeContext: job.scoutData,
+        });
+      } catch (auditErr: any) {
+        transitionJob(job.jobId, "failed", {
+          error: `Audit error: ${auditErr?.message ?? auditErr}`,
+        });
+        return json(res, 500, {
+          success: false,
+          error: "Audit engine failed",
+          jobId: job.jobId,
+        });
       }
 
-      return json(res, 200, { success: true, data: { target, report, verdict } });
+      // Transition to reviewing
+      transitionJob(job.jobId, "reviewing", { report });
+      await writeAudit(runtime, { roomId, userId, target: job.target, report });
+
+      let verdict;
+      try {
+        verdict = await runReview(runtime, {
+          target: job.target,
+          report,
+          scopeContext: job.scoutData,
+        });
+      } catch (reviewErr: any) {
+        transitionJob(job.jobId, "failed", {
+          error: `Review error: ${reviewErr?.message ?? reviewErr}`,
+        });
+        return json(res, 500, {
+          success: false,
+          error: "Review engine failed",
+          jobId: job.jobId,
+        });
+      }
+
+      await writeReview(runtime, { roomId, userId, target: job.target, report, verdict });
+
+      // Transition to terminal state
+      if (verdict.verdict === "publish") {
+        const finalJob = transitionJob(job.jobId, "published", { verdict });
+        await writeFinding(runtime, { roomId, userId, target: job.target, report, verdict });
+        return json(res, 200, { success: true, data: { job: finalJob } });
+      } else {
+        const finalJob = transitionJob(job.jobId, "discarded", { verdict });
+        return json(res, 200, { success: true, data: { job: finalJob } });
+      }
     } catch (e) {
       logger.error(`[UIBridge] audit failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
@@ -166,6 +227,9 @@ const runAuditRoute: Route = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// GET /vigilance/readiness
+// ---------------------------------------------------------------------------
 const readinessRoute: Route = {
   name: "vigilance-readiness",
   path: "/vigilance/readiness",
@@ -181,17 +245,87 @@ const readinessRoute: Route = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// GET /vigilance/jobs — list all jobs (optionally filtered by state)
+// ---------------------------------------------------------------------------
+const jobsListRoute: Route = {
+  name: "vigilance-jobs-list",
+  path: "/vigilance/jobs",
+  type: "GET",
+  public: true,
+  handler: async (req: any, res: any) => {
+    try {
+      const state = req.query?.state as string | undefined;
+      const targetId = req.query?.targetId as string | undefined;
+      const limit = parseInt(req.query?.limit ?? "50", 10);
+
+      const validStates = [
+        "submitted", "pending_approval", "approved", "scanning",
+        "reviewing", "published", "discarded", "failed",
+      ];
+      const filterState =
+        state && validStates.includes(state) ? (state as any) : undefined;
+
+      const result = listJobs({ state: filterState, targetId, limit });
+      const stats = jobStats();
+      return json(res, 200, { success: true, data: { jobs: result, stats } });
+    } catch (e) {
+      logger.error(`[UIBridge] jobs list failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// GET /vigilance/jobs/:jobId — single job detail
+// ---------------------------------------------------------------------------
+const jobDetailRoute: Route = {
+  name: "vigilance-job-detail",
+  path: "/vigilance/jobs/:jobId",
+  type: "GET",
+  public: true,
+  handler: async (req: any, res: any) => {
+    try {
+      const jobId = req.params?.jobId ?? "";
+      const job = getJob(jobId);
+      if (!job) {
+        return json(res, 404, { success: false, error: "Job not found" });
+      }
+      return json(res, 200, { success: true, data: { job } });
+    } catch (e) {
+      logger.error(`[UIBridge] job detail failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// GET /vigilance/feed — legacy feed (scouts + hitl from memory)
+// ---------------------------------------------------------------------------
 const feedRoute: Route = {
   name: "vigilance-feed",
   path: "/vigilance/feed",
   type: "GET",
   public: true,
-  handler: async (req: any, res: any, runtime: any) => {
+  handler: async (req: any, res: any) => {
     try {
-      const roomId = String(req.query?.roomId ?? "00000000-0000-0000-0000-000000000000");
-      const scouts = await listByStage(runtime, roomId, "scout", 30);
-      const hitl = await listByStage(runtime, roomId, "hitl", 30);
-      return json(res, 200, { success: true, data: { scouts, hitl } });
+      // Return jobs grouped by lifecycle bucket instead of raw memory search
+      const pending = listJobs({ state: "pending_approval", limit: 30 });
+      const approved = listJobs({ state: "approved", limit: 30 });
+      const scanning = listJobs({ state: "scanning", limit: 10 });
+      const reviewing = listJobs({ state: "reviewing", limit: 10 });
+      const stats = jobStats();
+
+      return json(res, 200, {
+        success: true,
+        data: {
+          pending,
+          approved,
+          scanning,
+          reviewing,
+          stats,
+        },
+      });
     } catch (e) {
       logger.error(`[UIBridge] feed failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
@@ -199,16 +333,22 @@ const feedRoute: Route = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// GET /vigilance/findings — completed findings
+// ---------------------------------------------------------------------------
 const findingsRoute: Route = {
   name: "vigilance-findings",
   path: "/vigilance/findings",
   type: "GET",
   public: true,
-  handler: async (req: any, res: any, runtime: any) => {
+  handler: async (req: any, res: any) => {
     try {
-      const roomId = String(req.query?.roomId ?? "00000000-0000-0000-0000-000000000000");
-      const findings = await listByStage(runtime, roomId, "finding", 30);
-      return json(res, 200, { success: true, data: { findings } });
+      const published = listJobs({ state: "published", limit: 50 });
+      const discarded = listJobs({ state: "discarded", limit: 50 });
+      return json(res, 200, {
+        success: true,
+        data: { published, discarded },
+      });
     } catch (e) {
       logger.error(`[UIBridge] findings failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
@@ -216,12 +356,23 @@ const findingsRoute: Route = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Plugin export
+// ---------------------------------------------------------------------------
 export const uiBridgePlugin: Plugin = {
   name: "VigilanceUIBridge",
-  description: "HTTP routes for UI-driven target assignment and results.",
+  description: "HTTP routes for UI-driven target assignment, job lifecycle, and results.",
   actions: [],
   evaluators: [],
   providers: [],
-  routes: [createTargetRoute, approveTargetRoute, runAuditRoute, feedRoute, findingsRoute, readinessRoute],
+  routes: [
+    createTargetRoute,
+    approveTargetRoute,
+    runAuditRoute,
+    feedRoute,
+    findingsRoute,
+    readinessRoute,
+    jobsListRoute,
+    jobDetailRoute,
+  ],
 };
-
