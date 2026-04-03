@@ -557,24 +557,83 @@ function buildBaseDescription(topSignal?: AnalyzerSignal): string {
   ].join(" ");
 }
 
-function enforceEvidencePolicy(
+function reviewThresholds(severity: FindingSeverity): {
+  publish: number;
+  humanReview: number;
+} {
+  return severityRank(severity) >= severityRank("high")
+    ? { publish: 0.78, humanReview: 0.45 }
+    : { publish: 0.55, humanReview: 0.35 };
+}
+
+function enforceReviewPolicy(
   report: AuditReport,
   verdict: ReviewerVerdict
 ): ReviewerVerdict {
-  if (report.evidence.meetsSeverityBar) {
-    return verdict;
+  const thresholds = reviewThresholds(report.severity);
+  const proofLabel = report.evidence.proofLevel.replace(/_/g, " ");
+  const hasGroundedEvidence = report.evidence.proofLevel !== "context_only";
+
+  if (!hasGroundedEvidence) {
+    return {
+      verdict: "discard",
+      rationale: `${verdict.rationale} Reviewer policy discarded this finding because it never rose above context-only evidence.`.trim(),
+      confidence: Math.min(verdict.confidence, 0.25),
+    };
   }
 
-  const policyMessage =
-    severityRank(report.severity) >= severityRank("high")
-      ? `Evidence policy blocked publication because ${report.severity} findings require replayable proof, but this report only has ${report.evidence.proofLevel.replace(/_/g, " ")} evidence.`
-      : `Evidence policy blocked publication because the report never rose above context-only evidence.`;
+  if (
+    severityRank(report.severity) >= severityRank("high") &&
+    !report.evidence.meetsSeverityBar
+  ) {
+    const heldForHuman =
+      verdict.confidence >= thresholds.humanReview ? "needs_human_review" : "discard";
+    const policyMessage = `Reviewer policy blocked auto-publication because ${report.severity} findings require replayable proof, but this report only has ${proofLabel} evidence.`;
+    return {
+      verdict: heldForHuman,
+      rationale: `${verdict.rationale} ${policyMessage}`.trim(),
+      confidence: heldForHuman === "discard" ? Math.min(verdict.confidence, 0.35) : verdict.confidence,
+    };
+  }
 
-  return {
-    verdict: "discard",
-    rationale: `${verdict.rationale} ${policyMessage}`.trim(),
-    confidence: Math.min(verdict.confidence, 0.35),
-  };
+  if (verdict.verdict === "publish") {
+    if (verdict.confidence >= thresholds.publish) {
+      return verdict;
+    }
+    if (verdict.confidence >= thresholds.humanReview) {
+      return {
+        verdict: "needs_human_review",
+        rationale: `${verdict.rationale} Reviewer policy held this out of the published gallery until a human validates the remaining uncertainty.`,
+        confidence: verdict.confidence,
+      };
+    }
+    return {
+      verdict: "discard",
+      rationale: `${verdict.rationale} Reviewer policy discarded this finding because review confidence never cleared the minimum threshold for human follow-up.`,
+      confidence: Math.min(verdict.confidence, thresholds.humanReview - 0.01),
+    };
+  }
+
+  if (verdict.verdict === "needs_human_review") {
+    if (verdict.confidence >= thresholds.humanReview) {
+      return verdict;
+    }
+    return {
+      verdict: "discard",
+      rationale: `${verdict.rationale} Reviewer policy discarded this finding because it remained too weak even for the human-review queue.`,
+      confidence: Math.min(verdict.confidence, thresholds.humanReview - 0.01),
+    };
+  }
+
+  if (verdict.confidence >= thresholds.humanReview) {
+    return {
+      verdict: "needs_human_review",
+      rationale: `${verdict.rationale} Reviewer policy preserved this grounded finding for human review instead of discarding it outright.`,
+      confidence: verdict.confidence,
+    };
+  }
+
+  return verdict;
 }
 
 export async function runAudit(
@@ -803,10 +862,10 @@ export async function runReview(
   const category = ingestion?.category ?? "unknown";
   const hasCode = Boolean(ingestion && ingestion.sourceFiles.length > 0);
   const fallback: ReviewerVerdict = {
-    verdict: "publish",
+    verdict: "needs_human_review",
     rationale:
-      "No counter-evidence found in the provided context; publish as a candidate finding pending reproduction.",
-    confidence: 0.55,
+      "No decisive counter-evidence was found in the provided context, but the finding should stay in the human-review queue until an operator confirms it.",
+    confidence: 0.5,
   };
 
   const codeContext = ingestion
@@ -824,6 +883,10 @@ export async function runReview(
     const promptParts: string[] = [
       "You are an adversarial security reviewer whose job is to DISPROVE reported vulnerabilities.",
       "You should be STRICT for critical and high severity findings, and more tolerant for medium and low.",
+      "You can return one of three dispositions:",
+      "- publish: the finding is grounded and strong enough for the main gallery",
+      "- needs_human_review: the finding is grounded enough to preserve, but too uncertain for auto-publication",
+      "- discard: the finding is weak, contradicted, or not worth keeping",
       "",
     ];
 
@@ -888,10 +951,11 @@ export async function runReview(
     promptParts.push(
       codeContext,
       "",
-      "Return STRICT JSON: { verdict: 'publish'|'discard', rationale: string, confidence: number }",
+      "Return STRICT JSON: { verdict: 'publish'|'needs_human_review'|'discard', rationale: string, confidence: number }",
       "- confidence is 0.0 to 1.0 where 1.0 means the finding is certainly valid",
-      "- For critical/high: require strong evidence to publish (confidence > 0.7)",
-      "- For medium/low: acceptable to publish with clear uncertainty labeling (confidence > 0.4)"
+      "- For critical/high: only publish when replayable proof exists and confidence is very strong (> 0.78); otherwise prefer needs_human_review over publish",
+      "- For medium/low: publish only when the code-path evidence is grounded and confidence is solid (> 0.55)",
+      "- If the finding looks grounded but still uncertain, use needs_human_review instead of discard"
     );
 
     const prompt = promptParts.filter(Boolean).join("\n");
@@ -909,8 +973,14 @@ export async function runReview(
 
     if (jsonStart >= 0 && jsonEnd > jsonStart) {
       const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-      return enforceEvidencePolicy(report, {
-        verdict: parsed.verdict === "discard" ? "discard" : "publish",
+      const parsedVerdict =
+        parsed.verdict === "discard"
+          ? "discard"
+          : parsed.verdict === "needs_human_review"
+            ? "needs_human_review"
+            : "publish";
+      return enforceReviewPolicy(report, {
+        verdict: parsedVerdict,
         rationale: String(parsed.rationale ?? fallback.rationale),
         confidence: sanitizeConfidence(parsed.confidence, fallback.confidence),
       });
@@ -919,7 +989,7 @@ export async function runReview(
     logger.warn(`[Review] LLM review failed, falling back to default verdict: ${e}`);
   }
 
-  return enforceEvidencePolicy(report, fallback);
+  return enforceReviewPolicy(report, fallback);
 }
 
 // ---------------------------------------------------------------------------

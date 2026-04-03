@@ -11,7 +11,8 @@ const VALID_TRANSITIONS: Record<AuditJobState, AuditJobState[]> = {
   pending_approval: ["approved", "failed"],
   approved: ["scanning", "failed"],
   scanning: ["reviewing", "failed"],
-  reviewing: ["published", "discarded", "failed"],
+  reviewing: ["published", "needs_human_review", "discarded", "failed"],
+  needs_human_review: ["published", "discarded", "failed"],
   published: [],
   discarded: [],
   failed: [],
@@ -206,6 +207,7 @@ export function jobStats(): Record<AuditJobState, number> {
     scanning: 0,
     reviewing: 0,
     published: 0,
+    needs_human_review: 0,
     discarded: 0,
     failed: 0,
   };

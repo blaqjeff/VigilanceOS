@@ -226,6 +226,26 @@ export const executeAuditAction: Action = {
       } as any;
     }
 
+    if (verdict.verdict === "needs_human_review") {
+      try {
+        transitionJob(job.jobId, "needs_human_review", { verdict });
+      } catch (e) {
+        logger.warn(`[Auditor] Could not transition to needs_human_review: ${e}`);
+      }
+
+      const humanReviewText = [
+        `âš ï¸ **HUMAN REVIEW REQUIRED** (${Math.round(verdict.confidence * 100)}%)`,
+        `Job: ${job.jobId} â†’ needs_human_review`,
+        verdict.rationale,
+      ].join("\n");
+      if (callback) await callback({ text: humanReviewText, action: "NEEDS_HUMAN_REVIEW" });
+      return {
+        success: true,
+        text: humanReviewText,
+        values: { report, verdict, target, jobId: job.jobId },
+      } as any;
+    }
+
     // Discarded
     try {
       transitionJob(job.jobId, "discarded", { verdict });
@@ -314,6 +334,8 @@ export const debunkFindingAction: Action = {
             report: job.report,
             verdict,
           });
+        } else if (verdict.verdict === "needs_human_review") {
+          transitionJob(job.jobId, "needs_human_review", { verdict });
         } else {
           transitionJob(job.jobId, "discarded", { verdict });
         }
@@ -327,17 +349,26 @@ export const debunkFindingAction: Action = {
         ? `❌ **REVIEW FAILED** (${Math.round(verdict.confidence * 100)}%): ${verdict.rationale}`
         : `✅ **REVIEW PASSED** (${Math.round(verdict.confidence * 100)}%): ${verdict.rationale}`;
 
+    const resolvedConsensus =
+      verdict.verdict === "needs_human_review"
+        ? `âš ï¸ **HUMAN REVIEW REQUIRED** (${Math.round(verdict.confidence * 100)}%): ${verdict.rationale}`
+        : finalConsensus;
+
     if (callback) {
       await callback({
-        text: finalConsensus,
+        text: resolvedConsensus,
         action:
-          verdict.verdict === "discard" ? "DISCARD_REPORT" : "PUBLISH_REPORT",
+          verdict.verdict === "discard"
+            ? "DISCARD_REPORT"
+            : verdict.verdict === "needs_human_review"
+              ? "NEEDS_HUMAN_REVIEW"
+              : "PUBLISH_REPORT",
       });
     }
 
     return {
-      success: verdict.verdict === "publish",
-      text: finalConsensus,
+      success: verdict.verdict !== "discard",
+      text: resolvedConsensus,
       values: { verdict, jobId: job.jobId },
     } as any;
   },

@@ -239,6 +239,9 @@ const runAuditRoute: Route = {
         const finalJob = transitionJob(job.jobId, "published", { verdict });
         await writeFinding(runtime, { roomId, userId, target: job.target, report, verdict });
         return json(res, 200, { success: true, data: { job: finalJob } });
+      } else if (verdict.verdict === "needs_human_review") {
+        const finalJob = transitionJob(job.jobId, "needs_human_review", { verdict });
+        return json(res, 200, { success: true, data: { job: finalJob } });
       } else {
         const finalJob = transitionJob(job.jobId, "discarded", { verdict });
         return json(res, 200, { success: true, data: { job: finalJob } });
@@ -284,7 +287,7 @@ const jobsListRoute: Route = {
 
       const validStates = [
         "submitted", "pending_approval", "approved", "scanning",
-        "reviewing", "published", "discarded", "failed",
+        "reviewing", "published", "needs_human_review", "discarded", "failed",
       ];
       const filterState =
         state && validStates.includes(state) ? (state as any) : undefined;
@@ -337,6 +340,7 @@ const feedRoute: Route = {
       const approved = listJobs({ state: "approved", limit: 30 });
       const scanning = listJobs({ state: "scanning", limit: 10 });
       const reviewing = listJobs({ state: "reviewing", limit: 10 });
+      const needsHumanReview = listJobs({ state: "needs_human_review", limit: 10 });
       const stats = jobStats();
 
       return json(res, 200, {
@@ -346,6 +350,7 @@ const feedRoute: Route = {
           approved,
           scanning,
           reviewing,
+          needsHumanReview,
           stats,
         },
       });
@@ -367,10 +372,11 @@ const findingsRoute: Route = {
   handler: async (req: any, res: any) => {
     try {
       const published = listJobs({ state: "published", limit: 50 });
+      const needsHumanReview = listJobs({ state: "needs_human_review", limit: 50 });
       const discarded = listJobs({ state: "discarded", limit: 50 });
       return json(res, 200, {
         success: true,
-        data: { published, discarded },
+        data: { published, needsHumanReview, discarded },
       });
     } catch (e) {
       logger.error(`[UIBridge] findings failed: ${e}`);

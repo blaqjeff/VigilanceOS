@@ -13,6 +13,7 @@ type AuditJobState =
   | "scanning"
   | "reviewing"
   | "published"
+  | "needs_human_review"
   | "discarded"
   | "failed";
 
@@ -78,7 +79,7 @@ type AuditReport = {
 };
 
 type ReviewerVerdict = {
-  verdict: "publish" | "discard";
+  verdict: "publish" | "needs_human_review" | "discard";
   rationale: string;
   confidence: number;
 };
@@ -154,6 +155,8 @@ function stateTone(state: AuditJobState): string {
       return "border-violet-400/30 bg-violet-400/10 text-violet-300";
     case "published":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "needs_human_review":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
     case "discarded":
       return "border-slate-500/30 bg-slate-500/10 text-slate-400";
     case "failed":
@@ -251,7 +254,7 @@ const STEP_LABELS: Record<string, string> = {
 };
 
 function LifecycleBar({ job }: { job: AuditJob }) {
-  const isTerminal = ["published", "discarded", "failed"].includes(job.state);
+  const isTerminal = ["published", "needs_human_review", "discarded", "failed"].includes(job.state);
   const currentIdx = LIFECYCLE_STEPS.indexOf(job.state);
 
   return (
@@ -301,6 +304,17 @@ function LifecycleBar({ job }: { job: AuditJob }) {
             <div className="h-2 w-2 rounded-full bg-slate-500 ring-2 ring-slate-500/30 scale-125" />
             <span className="text-[9px] uppercase tracking-wider text-slate-400 font-semibold">
               Discarded
+            </span>
+          </div>
+        </>
+      )}
+      {job.state === "needs_human_review" && (
+        <>
+          <div className="flex-1 h-px min-w-2 bg-amber-500/30" />
+          <div className="flex flex-col items-center gap-1 min-w-[3rem]">
+            <div className="h-2 w-2 rounded-full bg-amber-400 ring-2 ring-amber-400/30 scale-125" />
+            <span className="text-[9px] uppercase tracking-wider text-amber-300 font-semibold">
+              Human Review
             </span>
           </div>
         </>
@@ -577,9 +591,11 @@ function JobDetailPanel({
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${
                 job.verdict.verdict === "publish"
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : job.verdict.verdict === "needs_human_review"
+                    ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
                   : "border-red-500/30 bg-red-500/10 text-red-300"
               }`}>
-                {job.verdict.verdict}
+                {job.verdict.verdict.replace(/_/g, " ")}
               </span>
               <span className="text-sm text-slate-400">
                 {Math.round(job.verdict.confidence * 100)}% confidence
@@ -591,7 +607,11 @@ function JobDetailPanel({
             <div className="mt-3 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${
-                  job.verdict.verdict === "publish" ? "bg-emerald-400" : "bg-red-400"
+                  job.verdict.verdict === "publish"
+                    ? "bg-emerald-400"
+                    : job.verdict.verdict === "needs_human_review"
+                      ? "bg-amber-400"
+                      : "bg-red-400"
                 }`}
                 style={{ width: `${Math.round(job.verdict.confidence * 100)}%` }}
               />
@@ -812,6 +832,7 @@ export default function Home() {
   const approvedJobs = jobs.filter((j) => j.state === "approved");
   const activeJobs = jobs.filter((j) => j.state === "scanning" || j.state === "reviewing");
   const publishedJobs = jobs.filter((j) => j.state === "published");
+  const needsHumanReviewJobs = jobs.filter((j) => j.state === "needs_human_review");
   const discardedJobs = jobs.filter((j) => j.state === "discarded");
   const failedJobs = jobs.filter((j) => j.state === "failed");
 
@@ -857,6 +878,11 @@ export default function Home() {
                     {stats.published} published
                   </span>
                 )}
+                {stats.needs_human_review > 0 && (
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                    {stats.needs_human_review} needs review
+                  </span>
+                )}
               </div>
             )}
             <div className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${headerTone}`}>
@@ -880,6 +906,11 @@ export default function Home() {
               <p className="mt-3 text-sm leading-6 text-slate-400">
                 Submit a target, approve it through the HITL gate, and let the auditor + reviewer pipeline produce a grounded report.
               </p>
+              {needsHumanReviewJobs.length > 0 && (
+                <p className="text-xs uppercase tracking-[0.3em] text-amber-300">
+                  {needsHumanReviewJobs.length} awaiting analyst review
+                </p>
+              )}
             </div>
 
             <div className="flex w-full flex-col gap-3 lg:max-w-xl lg:flex-row">
@@ -1160,6 +1191,54 @@ export default function Home() {
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
                 Published findings will appear here after a target completes the full golden path: submit → approve → audit → review.
               </article>
+            )}
+
+            {needsHumanReviewJobs.length > 0 && (
+              <>
+                <div className="flex items-center gap-3 mt-4">
+                  <h3 className="text-base font-semibold text-amber-300">Needs Human Review</h3>
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                    {needsHumanReviewJobs.length}
+                  </span>
+                </div>
+                {needsHumanReviewJobs.slice(0, 6).map((job) => (
+                  <article
+                    key={job.jobId}
+                    className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-5 cursor-pointer hover:border-amber-400/40 transition"
+                    onClick={() => setSelectedJob(job)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "medium")}`}>
+                          {job.report?.severity ?? "medium"}
+                        </span>
+                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
+                          analyst review
+                        </span>
+                        {job.report?.evidence && (
+                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
+                            {proofLabel(job.report.evidence.proofLevel)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {job.verdict && (
+                          <span className="text-xs text-amber-300">
+                            reviewer {formatPercent(job.verdict.confidence)}
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-500">{job.target.displayName}</span>
+                      </div>
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-white">
+                      {job.report?.title ?? "Candidate finding"}
+                    </h3>
+                    <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
+                      {job.verdict?.rationale ?? job.report?.description ?? ""}
+                    </p>
+                  </article>
+                ))}
+              </>
             )}
 
             {/* Discarded findings */}

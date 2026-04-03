@@ -71,7 +71,7 @@ export type AuditReport = {
 };
 
 export type ReviewerVerdict = {
-  verdict: "publish" | "discard";
+  verdict: "publish" | "needs_human_review" | "discard";
   rationale: string;
   confidence: number; // 0..1
 };
@@ -151,6 +151,7 @@ export type AuditJobState =
   | "scanning"
   | "reviewing"
   | "published"
+  | "needs_human_review"
   | "discarded"
   | "failed";
 

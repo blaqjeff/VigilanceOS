@@ -478,22 +478,32 @@ Done when:
 
 - âœ… Reports are visibly evidence-first and not just narrative-first
 
-### 8. Make the Reviewer a real filter
+### 8. Make the Reviewer a real filter â€” âœ… COMPLETED
 
 Goal:
 
 Turn the reviewer into a meaningful quality gate, not a cosmetic persona.
 
-What to do:
+Implementation summary:
 
-- Increase reviewer strictness for critical/high
-- Allow more nuance for medium/low
-- Separate `review-passed` from `needs-human-review`
-- Preserve useful uncertain findings without letting them pollute the main gallery
+- Updated the canonical lifecycle with a real `needs_human_review` lane in `src/pipeline/types.ts` and `src/pipeline/jobStore.ts`
+  - `reviewing` jobs can now transition to `published`, `needs_human_review`, or `discarded`
+  - `needs_human_review` is preserved as a distinct review queue instead of being flattened into publish/discard
+- Refined reviewer policy in `src/pipeline/audit.ts`:
+  - reviewer prompts now support `publish`, `needs_human_review`, and `discard`
+  - high/critical findings require stronger reviewer confidence and replayable proof before auto-publication
+  - grounded-but-uncertain findings are preserved in the human-review queue instead of being silently discarded
+  - context-only or too-weak findings are still discarded deterministically
+- Updated `src/plugins/plugin-ui-bridge/index.ts` and `src/plugins/plugin-auditor-reviewer/index.ts` so both the HTTP golden path and the plugin action path respect the new reviewer outcome
+- Updated `ui/src/app/page.tsx` so the operator console clearly separates:
+  - published findings
+  - needs-human-review findings
+  - discarded findings
+- Verification: `bunx tsc -p tsconfig.json` and `bun run build:ui` both pass cleanly
 
 Done when:
 
-- High-impact findings feel filtered, not rubber-stamped
+- âœ… High-impact findings feel filtered, not rubber-stamped
 
 ### 9. Upgrade the UI into an operator console
 
@@ -597,13 +607,13 @@ If continuing in a new thread, start here:
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
 3. Verify the current stack in `C:\VigilanceOS`
-4. Implement ranked build order item 8: make the Reviewer a real filter
+4. Implement ranked build order item 9: upgrade the UI into an operator console
 
 That work should include:
 
-- increasing reviewer strictness for critical/high beyond the current evidence gate
-- separating `review-passed` from a secondary `needs-human-review` or similar uncertain state
-- preserving useful medium-confidence findings without letting them pollute the primary published gallery
-- reflecting that distinction clearly in the UI/API surfaces
+- surfacing the full queue and approval state clearly
+- improving scan/review visibility and report detail usability
+- exposing artifacts and uncertain findings more explicitly
+- making the UI sufficient for understanding pipeline state without any backend log reading
 
-After that, move directly into the next ranked operator-surface and Telegram work.
+After that, move directly into Telegram MVP completion and Scout scheduling work.
