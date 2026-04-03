@@ -75,9 +75,18 @@ The following important local/source changes were reconciled:
 
 ### Remaining runtime/integration blockers
 
-- Immunefi MCP is not working because local Python dependencies are missing
-- OpenAI-compatible model auth is currently unauthorized in the active environment
+- OpenAI-compatible model availability is the current blocker for end-to-end audits in the active environment
 - Telegram is not active because `TELEGRAM_BOT_TOKEN` is not set
+
+### Latest validation snapshot
+
+- The UI-facing Vigilance proxy layer now correctly resolves Eliza plugin panel routes instead of calling stale flat `/vigilance/*` backend paths
+- Manual Scout refresh through the UI was verified live against Immunefi MCP and returned real projects
+- Controlled demo targets were submitted and approved successfully through the UI:
+  - `theredguild/damn-vulnerable-defi`
+  - `coral-xyz/sealevel-attacks`
+- The first real audit attempt reached the expected model-readiness gate and failed honestly because the configured Nosana endpoint returned `503 Service Unavailable`
+- Legacy Eliza memory persistence can still fail in this environment, but those writes are now non-fatal and no longer break canonical job creation
 
 ### Important note about earlier failures
 
@@ -597,25 +606,30 @@ Done when:
 
 - ✅ Scout behaves like a real watcher even if it is not truly continuous yet
 
-### 12. Prepare controlled demo targets
+### 12. Prepare controlled demo targets â€” âœ… COMPLETED
 
 Goal:
 
 Make the demo dependable.
 
-Suggested demo set:
+Implementation summary:
 
-- one strong Solana target
-- one strong EVM target
-- one controlled or intentionally vulnerable example
-
-Known suggestion:
-
-- `theredguild/damn-vulnerable-defi` for EVM-friendly demonstrations
+- Selected an intentional demo set aligned with the real audit wedge:
+  - Solana / Rust primary: `coral-xyz/sealevel-attacks`
+  - Solidity / EVM primary: `theredguild/damn-vulnerable-defi`
+  - Controlled secondary / backup: `Ackee-Blockchain/solana-common-attack-vectors`
+- Validated why each target belongs in the demo:
+  - `sealevel-attacks` is a strong fit for signer / authority, PDA, account ownership, and CPI mistake coverage
+  - `damn-vulnerable-defi` is a strong fit for controlled EVM exploit-path demonstrations and reviewer/evidence checks
+  - Ackee's Solana repo provides intentionally vulnerable examples and PoC-style coverage as a backup or second-pass validation set
+- Verified the manual-target golden path against the primary demo repos through the live UI/API:
+  - both primary demo targets can be submitted and approved successfully
+  - queue visibility reflects the resulting approved jobs correctly
+- Confirmed the remaining blocker is no longer target selection or product routing, but external model availability
 
 Done when:
 
-- Demo targets are selected intentionally rather than improvised at the last minute
+- âœ… Demo targets are selected intentionally rather than improvised at the last minute
 
 ## 10. What To Cut First If Time Tightens
 
@@ -641,14 +655,18 @@ If continuing in a new thread, start here:
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
 3. Verify the current stack in `C:\VigilanceOS`
-4. Implement ranked build order item 12: prepare controlled demo targets
+4. Move into final demo hardening and submission prep
 
 That work should include:
 
-- choosing one strong Solana / Rust demo target
-- choosing one strong Solidity / EVM demo target
-- choosing one controlled or intentionally vulnerable example
-- validating that the selected targets fit the current audit wedge and evidence standard
-- documenting why each target is in the demo set
+- preserving the current approved demo job(s) so they can be rerun as soon as a working model endpoint is available
+- preparing a short deployment/runbook for swapping in a self-hosted or replacement OpenAI-compatible endpoint
+- documenting the exact live-demo sequence for judges:
+  - Scout refresh
+  - target approval
+  - audit run
+  - reviewer result
+  - report / findings walkthrough
+- deciding whether Telegram should stay disabled for demo simplicity or be re-enabled once a fresh token is available
 
 After that, move directly into final demo hardening and submission prep.
