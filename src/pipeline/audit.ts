@@ -11,6 +11,9 @@ import type {
 import { analyzeSolanaRust, formatSignalsForPrompt } from "../analyzers/solana.js";
 import type { SolanaAnalysisResult } from "../analyzers/solana.js";
 import { generateSolanaPoC } from "../analyzers/solana-poc.js";
+import { analyzeSolidityEvm, formatEvmSignalsForPrompt } from "../analyzers/evm.js";
+import type { EvmAnalysisResult } from "../analyzers/evm.js";
+import { generateEvmPoC } from "../analyzers/evm-poc.js";
 import { simpleHash } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -163,20 +166,73 @@ function solanaRustAuditPrompt(): string {
 
 function solidityEvmAuditPrompt(): string {
   return [
-    "You are an expert Solidity / EVM security auditor.",
-    "Focus your analysis on these critical vulnerability classes:",
-    "1. Oracle and price manipulation (TWAP manipulation, flash loan attacks)",
-    "2. Access control and authorization flaws (missing onlyOwner, role checks)",
-    "3. Accounting and invariant violations (balance tracking, share calculation)",
-    "4. Upgradeability and initializer mistakes (uninitialized proxy, storage collision)",
-    "5. Unsafe external calls, approvals, token handling, and transfer-flow bugs",
+    "You are an expert Solidity / EVM security auditor specializing in DeFi protocol vulnerabilities.",
+    "You understand the EVM execution model deeply: contracts hold state in storage slots, external calls can",
+    "trigger callbacks via fallback/receive, msg.sender changes on internal calls, and delegatecall preserves",
+    "the caller's storage context.",
     "",
-    "Additionally check for:",
-    "- Reentrancy (cross-function, cross-contract, read-only)",
-    "- Front-running / sandwich attacks",
-    "- Integer overflow in fee/reward calculations",
-    "- Unchecked low-level calls (call, delegatecall)",
-    "- ERC-20 token quirks (fee-on-transfer, rebasing, non-standard return)",
+    "=== PRIMARY VULNERABILITY CLASSES (analyze in this priority order) ===",
+    "",
+    "1. ORACLE / PRICE MANIPULATION",
+    "   Look for:",
+    "   - Chainlink latestRoundData() without staleness check (updatedAt, answeredInRound)",
+    "   - Uniswap slot0() used for pricing (manipulable via flash loan in a single tx)",
+    "   - AMM getReserves() used for on-chain price calculation (flash loan manipulable)",
+    "   - TWAP with too-short window (minutes instead of hours)",
+    "   - Division before multiplication in price/share calculations (precision loss)",
+    "   - Missing confidence interval validation on Chainlink prices",
+    "   - Price feeds not validated for L2 sequencer uptime (Arbitrum, Optimism)",
+    "",
+    "2. ACCESS CONTROL AND AUTHORIZATION",
+    "   Look for:",
+    "   - External/public state-mutating functions without onlyOwner/onlyRole/require(msg.sender)",
+    "   - tx.origin for authorization (phishing relay attack)",
+    "   - Unprotected selfdestruct/suicide",
+    "   - Missing access control on emergency/pause/upgrade functions",
+    "   - Role assignment functions callable by non-admins",
+    "   - Default admin role not properly secured in AccessControl",
+    "",
+    "3. ACCOUNTING AND INVARIANT VIOLATIONS",
+    "   Look for:",
+    "   - Share calculations without totalSupply == 0 check (first depositor / vault inflation attack)",
+    "   - balanceOf() mixed with internal balance tracking (donation attack)",
+    "   - State updates AFTER external calls (checks-effects-interactions violation)",
+    "   - Custom mint/burn without totalSupply sync",
+    "   - Rounding direction always favoring one party (attacker/protocol)",
+    "   - Missing dead share / minimum deposit protections in vaults",
+    "",
+    "4. UPGRADEABILITY AND INITIALIZER MISTAKES",
+    "   Look for:",
+    "   - initialize() without OpenZeppelin's 'initializer' modifier (re-init attack)",
+    "   - Constructors in upgradeable contracts (state only on implementation, not proxy)",
+    "   - Unprotected _authorizeUpgrade / upgradeTo (anyone can change implementation)",
+    "   - delegatecall to user-controlled address (arbitrary code execution)",
+    "   - Storage slot collision between proxy and implementation",
+    "   - Uninitialized implementation contracts behind proxies",
+    "",
+    "5. UNSAFE EXTERNAL CALLS / TOKEN HANDLING",
+    "   Look for:",
+    "   - Unchecked .call() return value (silent failure)",
+    "   - ERC-20 .transfer()/.transferFrom() without SafeERC20 (USDT, BNB quirks)",
+    "   - approve() without prior reset to 0 (approval front-running)",
+    "   - Fee-on-transfer tokens: amount parameter trusted after transferFrom",
+    "   - Rebasing tokens breaking balance assumptions",
+    "   - ETH sent to contracts without receive/fallback (stuck funds)",
+    "",
+    "=== ADDITIONAL CHECKS ===",
+    "- Reentrancy: external calls followed by state updates without nonReentrant (cross-function, cross-contract, read-only)",
+    "- Front-running: deadline = block.timestamp (no deadline), amountOutMin = 0 (no slippage)",
+    "- Integer: unchecked{} blocks on financial values in 0.8+, missing SafeMath in < 0.8",
+    "- delegatecall in non-proxy context (storage corruption)",
+    "- Missing event emissions for state changes (off-chain monitoring blind spots)",
+    "",
+    "=== EVIDENCE STANDARD ===",
+    "Your finding MUST include:",
+    "- The exact file path, contract name, function name, and line number",
+    "- The specific attack scenario: step-by-step exploit flow",
+    "- What an attacker gains (funds, authority, state corruption, DoS)",
+    "- Conditions required (flash loan needed? specific token type? timing?)",
+    "- A PoC as a Foundry test that demonstrates the exploit path",
   ].join("\n");
 }
 
@@ -265,6 +321,7 @@ export async function runAudit(
 
   // --- Run category-specific static analyzers ---
   let solanaAnalysis: SolanaAnalysisResult | undefined;
+  let evmAnalysis: EvmAnalysisResult | undefined;
   let analysisContext = "";
 
   if (category === "solana_rust" && ingestion && hasCode) {
@@ -275,13 +332,23 @@ export async function runAudit(
         `(${solanaAnalysis.signals.filter((s) => s.severityHint === "critical").length} critical, ` +
         `${solanaAnalysis.signals.filter((s) => s.severityHint === "high").length} high)`
     );
+  } else if (category === "solidity_evm" && ingestion && hasCode) {
+    evmAnalysis = analyzeSolidityEvm(ingestion.sourceFiles);
+    analysisContext = formatEvmSignalsForPrompt(evmAnalysis);
+    logger.info(
+      `[Audit] EVM static analysis: ${evmAnalysis.signals.length} signals ` +
+        `(${evmAnalysis.signals.filter((s) => s.severityHint === "critical").length} critical, ` +
+        `${evmAnalysis.signals.filter((s) => s.severityHint === "high").length} high)`
+    );
   }
 
   // Generate a grounded PoC if we have analysis results
-  const generatedPoC =
-    solanaAnalysis && solanaAnalysis.signals.length > 0
-      ? generateSolanaPoC(solanaAnalysis)
-      : null;
+  let generatedPoC: string | null = null;
+  if (solanaAnalysis && solanaAnalysis.signals.length > 0) {
+    generatedPoC = generateSolanaPoC(solanaAnalysis);
+  } else if (evmAnalysis && evmAnalysis.signals.length > 0) {
+    generatedPoC = generateEvmPoC(evmAnalysis);
+  }
 
   try {
     const specialistPrompt = getSpecialistPrompt(category);
@@ -414,11 +481,14 @@ export async function runReview(
     ? buildCodeContext(ingestion)
     : "[No source code was available for independent review verification.]";
 
-  // Run Solana static analysis for the reviewer too (independent verification)
+  // Run static analysis for the reviewer too (independent verification)
   let reviewAnalysisContext = "";
   if (category === "solana_rust" && ingestion && hasCode) {
     const reviewAnalysis = analyzeSolanaRust(ingestion.sourceFiles);
     reviewAnalysisContext = formatSignalsForPrompt(reviewAnalysis);
+  } else if (category === "solidity_evm" && ingestion && hasCode) {
+    const reviewAnalysis = analyzeSolidityEvm(ingestion.sourceFiles);
+    reviewAnalysisContext = formatEvmSignalsForPrompt(reviewAnalysis);
   }
 
   try {
@@ -460,6 +530,25 @@ export async function runReview(
         "- has_one= validates that the account field matches the expected value from the target account struct",
         "- Rust's debug builds DO panic on overflow; only release builds wrap. Check if [profile.release] overflow-checks = true in Cargo.toml",
         "- init_if_needed is different from init: it IS safe against reinitialization (it's a no-op if already initialized)",
+      );
+    }
+
+    // Solidity/EVM-specific review checks
+    if (category === "solidity_evm") {
+      promptParts.push(
+        "",
+        "=== SOLIDITY/EVM-SPECIFIC FALSE POSITIVE CHECKS ===",
+        "Before publishing, verify these EVM-specific patterns:",
+        "- Solidity >= 0.8 has built-in overflow/underflow checks — unchecked{} blocks are the exception, not the rule",
+        "- OpenZeppelin's ReentrancyGuard (nonReentrant modifier) prevents reentrancy — check if it's applied",
+        "- SafeERC20 wraps .transfer()/.transferFrom()/.approve() with return-value checks — if used, token handling is safe",
+        "- OpenZeppelin's Initializable contract prevents re-initialization when 'initializer' modifier is used",
+        "- UUPS proxies with _authorizeUpgrade protected by onlyOwner are safe — check the modifier",
+        "- Chainlink's latestRoundData returns (roundId, answer, startedAt, updatedAt, answeredInRound) — check which are validated",
+        "- CEI pattern compliance: state updates before external calls prevent reentrancy even without nonReentrant",
+        "- view/pure functions cannot modify state — they cannot be direct reentrancy entry points (but can return stale data)",
+        "- Modifier ordering matters in Solidity — earlier modifiers run first",
+        "- Private functions are only 'private' to the contract — not hidden from the blockchain (data is public)",
       );
     }
 
