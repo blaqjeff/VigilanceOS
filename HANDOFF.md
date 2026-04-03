@@ -557,24 +557,45 @@ Done when:
 
 - ✅ A user can reasonably monitor and approve work from Telegram
 
-### 11. Implement Scout as scheduled polling plus manual refresh
+### 11. Implement Scout as scheduled polling plus manual refresh — ✅ COMPLETED
 
 Goal:
 
 Ship believable monitoring without overcommitting to brittle real-time behavior.
 
-What to do:
+Implementation summary:
 
-- scheduled polling
-- manual refresh
-- dedupe discovered programs
-- extract scope and reward context
-- classify across all Scout categories
-- feed both UI and Telegram
+- Created `src/scout/watcher.ts` — shared Scout watcher state with:
+  - scheduled polling
+  - manual refresh entrypoints
+  - dedupe across repeated and cross-category discoveries
+  - category classification for Blockchain / DLT, Smart Contract, and Websites and Applications
+  - scope and reward context extraction
+  - recent discovery snapshots for the UI/API
+- Updated `src/plugins/plugin-scout/index.ts` so Scout now:
+  - starts the watcher on boot
+  - supports manual full refresh
+  - supports ad hoc category/project queries through the same shared discovery path
+- Updated `src/pipeline/jobStore.ts` so refreshed Scout discoveries can update target metadata and Scout context on existing jobs instead of creating duplicate jobs
+- Updated `src/plugins/plugin-ui-bridge/index.ts` with:
+  - `GET /vigilance/scout`
+  - `POST /vigilance/scout/refresh`
+- Added Next.js proxy routes:
+  - `ui/src/app/api/vigilance/scout/route.ts`
+  - `ui/src/app/api/vigilance/scout/refresh/route.ts`
+- Updated `ui/src/app/page.tsx` so the operator console now includes:
+  - Scout watcher health/status
+  - poll interval, last run, next run, and total tracked counts
+  - manual Scout refresh control
+  - per-category watch cards
+  - recent discoveries with reward, scope, repo, and refresh context
+- Updated `src/telegram/ops.ts` so Scout alerts now include category plus scope/reward context
+- Updated `.env.example` with optional Scout polling configuration
+- Verification: `bunx tsc -p tsconfig.json` and `bun run build:ui` both pass cleanly
 
 Done when:
 
-- Scout behaves like a real watcher even if it is not truly continuous yet
+- ✅ Scout behaves like a real watcher even if it is not truly continuous yet
 
 ### 12. Prepare controlled demo targets
 
@@ -620,15 +641,14 @@ If continuing in a new thread, start here:
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
 3. Verify the current stack in `C:\VigilanceOS`
-4. Implement ranked build order item 11: Scout as scheduled polling plus manual refresh
+4. Implement ranked build order item 12: prepare controlled demo targets
 
 That work should include:
 
-- scheduled polling
-- manual refresh
-- dedupe discovered programs
-- extracting scope and reward context
-- classifying across all Scout categories
-- feeding both UI and Telegram
+- choosing one strong Solana / Rust demo target
+- choosing one strong Solidity / EVM demo target
+- choosing one controlled or intentionally vulnerable example
+- validating that the selected targets fit the current audit wedge and evidence standard
+- documenting why each target is in the demo set
 
-After that, move directly into controlled demo target preparation.
+After that, move directly into final demo hardening and submission prep.

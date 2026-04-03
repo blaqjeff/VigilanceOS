@@ -14,6 +14,17 @@ function truncate(value: unknown, max = 280): string {
   return `${text.slice(0, Math.max(0, max - 3)).trim()}...`;
 }
 
+function textList(value: unknown, limit = 3): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => asText(item))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
 function formatPercent(value?: number): string {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "n/a";
@@ -122,7 +133,11 @@ export async function sendTelegramAlert(
 }
 
 export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string {
-  const rewardLabel = truncate((job.scoutData as any)?.maxBounty, 120);
+  const categoryLabel = truncate((job.scoutData as any)?.categoryLabel, 120);
+  const rewardSummary = textList((job.scoutData as any)?.rewardSummary, 2).join(" | ");
+  const scopeSummary = textList((job.scoutData as any)?.scopeSummary, 2).join(" | ");
+  const rewardLabel =
+    rewardSummary || truncate((job.scoutData as any)?.maxBountyText ?? (job.scoutData as any)?.maxBounty, 120);
   const repoList = Array.isArray((job.scoutData as any)?.githubRepositories)
     ? ((job.scoutData as any)?.githubRepositories as string[])
     : [];
@@ -132,7 +147,9 @@ export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string
     `Target: ${job.target.displayName}`,
     `Job: ${job.jobId}`,
     `State: ${stateLabel(job.state)}`,
+    categoryLabel ? `Category: ${categoryLabel}` : "",
     rewardLabel ? `Reward: ${rewardLabel}` : "",
+    scopeSummary ? `Scope: ${truncate(scopeSummary, 160)}` : "",
     repoList.length > 0 ? `Repo: ${truncate(repoList[0], 120)}` : "",
     `Approve and run: /approve ${job.jobId}`,
     `Status: /status ${job.jobId}`,

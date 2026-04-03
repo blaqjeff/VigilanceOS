@@ -105,13 +105,16 @@ export function transitionJob(
  */
 export function updateJobData(
   jobId: string,
-  data: Partial<Pick<AuditJob, "ingestion" | "report" | "verdict" | "error" | "scoutData">>
+  data: Partial<
+    Pick<AuditJob, "target" | "ingestion" | "report" | "verdict" | "error" | "scoutData">
+  >
 ): AuditJob {
   const job = jobs.get(jobId);
   if (!job) {
     throw new Error(`[JobStore] Job not found: ${jobId}`);
   }
 
+  if (data.target !== undefined) job.target = data.target;
   if (data.ingestion !== undefined) job.ingestion = data.ingestion;
   if (data.report !== undefined) job.report = data.report;
   if (data.verdict !== undefined) job.verdict = data.verdict;

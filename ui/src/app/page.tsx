@@ -124,6 +124,63 @@ type ReadinessSnapshot = {
   integrations: Record<string, ReadinessIntegration>;
 };
 
+type ScoutWatcherStatus = "idle" | "scheduled" | "running" | "blocked" | "error";
+
+type ScoutDiscovery = {
+  projectKey: string;
+  jobId: string;
+  targetId: string;
+  state: string;
+  projectId?: string;
+  projectName: string;
+  category: "blockchain_dlt" | "smart_contract" | "websites_apps";
+  categoryLabel: string;
+  categoryTags: string[];
+  githubRepositories: string[];
+  rewardSummary: string[];
+  scopeSummary: string[];
+  maxBountyText?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastAlertedAt?: string;
+  lastEvent: "new" | "updated" | "seen";
+  refreshCount: number;
+};
+
+type ScoutWatcherCategorySnapshot = {
+  key: "blockchain_dlt" | "smart_contract" | "websites_apps";
+  label: string;
+  queries: string[];
+  discoveredCount: number;
+  newDiscoveries: number;
+  lastRunMatches: number;
+  lastRunAt?: string;
+};
+
+type ScoutWatcherSnapshot = {
+  enabled: boolean;
+  mode: "DEMO" | "LIVE";
+  status: ScoutWatcherStatus;
+  pollIntervalMs: number;
+  startedAt?: string;
+  lastRunAt?: string;
+  lastSuccessAt?: string;
+  nextRunAt?: string;
+  lastReason?: string;
+  lastError?: string;
+  totalRuns: number;
+  totalTrackedTargets: number;
+  totalNewDiscoveries: number;
+  readiness: {
+    available: boolean;
+    state: string;
+    summary: string;
+    action?: string;
+  };
+  categories: ScoutWatcherCategorySnapshot[];
+  recentDiscoveries: ScoutDiscovery[];
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -235,6 +292,49 @@ function countArtifactEvidence(report?: AuditReport): string | null {
   if (!report?.evidence) return null;
 
   return `${report.evidence.traces.length} traces | ${report.evidence.artifacts.length} artifacts | ${report.evidence.reproduction.steps.length} replay steps`;
+}
+
+function scoutStatusTone(status: ScoutWatcherStatus): string {
+  switch (status) {
+    case "scheduled":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "running":
+      return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
+    case "blocked":
+      return "border-red-500/30 bg-red-500/10 text-red-300";
+    case "error":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    default:
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  }
+}
+
+function scoutEventTone(event: ScoutDiscovery["lastEvent"]): string {
+  switch (event) {
+    case "new":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "updated":
+      return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
+    default:
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  }
+}
+
+function formatPollInterval(ms: number): string {
+  if (ms < 60_000) {
+    return `${Math.max(1, Math.round(ms / 1000))} sec`;
+  }
+
+  const minutes = Math.round(ms / 60_000);
+  return `${minutes} min`;
+}
+
+function summaryLine(items: string[] | undefined, fallback: string): string {
+  if (!items || items.length === 0) {
+    return fallback;
+  }
+
+  return items.slice(0, 2).join(" | ");
 }
 
 function operatorStateCopy(state: AuditJobState): string {
@@ -735,6 +835,33 @@ function OperatorSummaryCard({
   );
 }
 
+function ScoutCategoryCard({
+  category,
+}: {
+  category: ScoutWatcherCategorySnapshot;
+}) {
+  return (
+    <article className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Scout Category</p>
+          <h4 className="mt-2 text-sm font-semibold text-white">{category.label}</h4>
+        </div>
+        <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-200">
+          {category.discoveredCount} tracked
+        </span>
+      </div>
+      <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
+        <span>{category.lastRunMatches} seen last sweep</span>
+        <span>{category.newDiscoveries} new total</span>
+      </div>
+      <p className="mt-3 text-[11px] leading-5 text-slate-500">
+        Queries: {category.queries.join(" | ")}
+      </p>
+    </article>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
@@ -742,9 +869,11 @@ function OperatorSummaryCard({
 export default function Home() {
   const [target, setTarget] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [scoutBusy, setScoutBusy] = React.useState(false);
   const [jobs, setJobs] = React.useState<AuditJob[]>([]);
   const [stats, setStats] = React.useState<JobStats | null>(null);
   const [readiness, setReadiness] = React.useState<ReadinessSnapshot | null>(null);
+  const [scout, setScout] = React.useState<ScoutWatcherSnapshot | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
@@ -752,17 +881,20 @@ export default function Home() {
 
   const refresh = React.useCallback(async () => {
     try {
-      const [jobsRes, readinessRes] = await Promise.all([
+      const [jobsRes, readinessRes, scoutRes] = await Promise.all([
         fetch("/api/vigilance/jobs?limit=50"),
         fetch("/api/vigilance/readiness"),
+        fetch("/api/vigilance/scout"),
       ]);
 
       const jobsJson = await jobsRes.json().catch(() => null);
       const readinessJson = await readinessRes.json().catch(() => null);
+      const scoutJson = await scoutRes.json().catch(() => null);
 
       setJobs(jobsJson?.data?.jobs ?? []);
       setStats(jobsJson?.data?.stats ?? null);
       setReadiness(readinessJson?.data ?? null);
+      setScout(scoutJson?.data ?? null);
       setLastRefreshedAt(new Date().toISOString());
     } catch {
       setActionError("Operator console could not refresh backend state.");
@@ -900,6 +1032,25 @@ export default function Home() {
     }
   }
 
+  async function refreshScoutNow() {
+    setScoutBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/vigilance/scout/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(payload?.message ?? payload?.error ?? "Scout refresh failed.");
+      }
+      await refresh();
+    } finally {
+      setScoutBusy(false);
+    }
+  }
+
   // ---- Computed ----
 
   const readinessItems = readiness ? Object.values(readiness.integrations) : [];
@@ -908,6 +1059,9 @@ export default function Home() {
   const headerTone = headerReady
     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
     : "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  const scoutCategories = scout?.categories ?? [];
+  const scoutDiscoveries = scout?.recentDiscoveries ?? [];
+  const scoutHeaderTone = scoutStatusTone(scout?.status ?? "idle");
 
   // Group jobs
   const orderedJobs = [...jobs].sort(
@@ -1155,55 +1309,201 @@ export default function Home() {
             </div>
           </div>
 
-          <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Recent Activity</p>
-                <h3 className="mt-2 text-lg font-semibold text-white">Latest Transitions</h3>
+          <div className="space-y-4">
+            <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Scout Watch</p>
+                  <h3 className="mt-2 text-lg font-semibold text-white">Scheduled Monitoring</h3>
+                </div>
+                <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${scoutHeaderTone}`}>
+                  {scout?.status ?? "idle"}
+                </span>
               </div>
-              <span className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">
-                {orderedJobs.length} tracked
-              </span>
-            </div>
-            <p className="mt-4 text-sm leading-6 text-slate-400">
-              The newest state changes appear here so an operator can confirm movement through approval, audit, review, and publication without reading backend logs.
-            </p>
+              <p className="mt-4 text-sm leading-6 text-slate-400">
+                Scout polls across Blockchain / DLT, Smart Contract, and Websites and Applications, then keeps the operator queue warm with deduped targets and context-rich alerts.
+              </p>
 
-            {recentTransitions.length > 0 ? (
-              <div className="mt-4 space-y-3">
-                {recentTransitions.map(({ key, job, transition }) => (
-                  <button
-                    key={key}
-                    onClick={() => setSelectedJob(job)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left transition hover:border-cyan-400/20"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-white">{job.target.displayName}</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(transition.from)}`}>
-                            {stateLabel(transition.from)}
-                          </span>
-                          <span className="text-xs text-slate-600">-&gt;</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(transition.to)}`}>
-                            {stateLabel(transition.to)}
-                          </span>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500">Tracked</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{scout?.totalTrackedTargets ?? 0}</p>
+                  <p className="mt-1 text-xs text-slate-500">{scout?.mode ?? "LIVE"} mode</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500">Runs</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{scout?.totalRuns ?? 0}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Every {formatPollInterval(scout?.pollIntervalMs ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500">New Discoveries</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{scout?.totalNewDiscoveries ?? 0}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {scout?.lastRunAt ? `Last run ${formatTime(scout.lastRunAt)}` : "Awaiting first sweep"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div className="text-sm text-slate-400">
+                  <p>
+                    Last success: {scout?.lastSuccessAt ? formatDateTime(scout.lastSuccessAt) : "Not yet"}
+                  </p>
+                  <p className="mt-1">
+                    Next run: {scout?.nextRunAt ? formatDateTime(scout.nextRunAt) : "Waiting"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void refreshScoutNow()}
+                  disabled={scoutBusy}
+                  className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {scoutBusy ? "Refreshing..." : "Refresh Scout"}
+                </button>
+              </div>
+
+              {scout?.readiness?.summary && (
+                <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                  scout?.readiness?.available
+                    ? "border-cyan-400/20 bg-cyan-400/5 text-cyan-100"
+                    : "border-red-500/20 bg-red-500/10 text-red-100"
+                }`}>
+                  <p>{scout.readiness.summary}</p>
+                  {scout.readiness.action ? (
+                    <p className="mt-2 text-xs text-slate-300">{scout.readiness.action}</p>
+                  ) : null}
+                </div>
+              )}
+
+              <div className="mt-4 grid gap-3 xl:grid-cols-3">
+                {scoutCategories.length > 0 ? (
+                  scoutCategories.map((category) => (
+                    <ScoutCategoryCard key={category.key} category={category} />
+                  ))
+                ) : (
+                  <p className="rounded-2xl border border-dashed border-white/10 bg-slate-950/50 px-4 py-6 text-sm text-slate-500 xl:col-span-3">
+                    Scout categories will populate after the watcher finishes its first sweep.
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Recent Discoveries</p>
+                  <span className="text-[11px] uppercase tracking-[0.2em] text-slate-600">
+                    {scoutDiscoveries.length} visible
+                  </span>
+                </div>
+                {scoutDiscoveries.length > 0 ? (
+                  <div className="mt-3 space-y-3">
+                    {scoutDiscoveries.slice(0, 4).map((discovery) => {
+                      const linkedJob = jobs.find((job) => job.jobId === discovery.jobId) ?? null;
+                      const content = (
+                        <div className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left transition hover:border-cyan-400/20">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-white/10 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-300">
+                                  {discovery.categoryLabel}
+                                </span>
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${scoutEventTone(discovery.lastEvent)}`}>
+                                  {discovery.lastEvent}
+                                </span>
+                              </div>
+                              <p className="mt-3 truncate text-sm font-medium text-white">{discovery.projectName}</p>
+                              <p className="mt-2 text-xs text-cyan-200">
+                                {summaryLine(discovery.rewardSummary, discovery.maxBountyText ?? "Reward context pending")}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {summaryLine(discovery.scopeSummary, "Scope context pending")}
+                              </p>
+                              {discovery.githubRepositories.length > 0 && (
+                                <p className="mt-1 truncate text-[11px] text-slate-500">
+                                  Repo: {discovery.githubRepositories[0]}
+                                </p>
+                              )}
+                            </div>
+                            <div className="text-right text-xs text-slate-500">
+                              <p>{formatTime(discovery.lastSeenAt)}</p>
+                              <p className="mt-1">{discovery.refreshCount} sweeps</p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+
+                      return linkedJob ? (
+                        <button
+                          key={discovery.projectKey}
+                          onClick={() => setSelectedJob(linkedJob)}
+                          className="w-full text-left"
+                        >
+                          {content}
+                        </button>
+                      ) : (
+                        <div key={discovery.projectKey}>{content}</div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-2xl border border-dashed border-white/10 bg-slate-950/50 px-4 py-6 text-sm text-slate-500">
+                    Recent Scout discoveries will appear here once monitoring finds in-scope programs.
+                  </p>
+                )}
+              </div>
+            </article>
+
+            <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Recent Activity</p>
+                  <h3 className="mt-2 text-lg font-semibold text-white">Latest Transitions</h3>
+                </div>
+                <span className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">
+                  {orderedJobs.length} tracked
+                </span>
+              </div>
+              <p className="mt-4 text-sm leading-6 text-slate-400">
+                The newest state changes appear here so an operator can confirm movement through approval, audit, review, and publication without reading backend logs.
+              </p>
+
+              {recentTransitions.length > 0 ? (
+                <div className="mt-4 space-y-3">
+                  {recentTransitions.map(({ key, job, transition }) => (
+                    <button
+                      key={key}
+                      onClick={() => setSelectedJob(job)}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left transition hover:border-cyan-400/20"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-white">{job.target.displayName}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(transition.from)}`}>
+                              {stateLabel(transition.from)}
+                            </span>
+                            <span className="text-xs text-slate-600">-&gt;</span>
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(transition.to)}`}>
+                              {stateLabel(transition.to)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right text-xs text-slate-500">
+                          <p>{formatTime(transition.at)}</p>
+                          <p className="mt-1 font-mono text-slate-600">{job.jobId.slice(0, 8)}</p>
                         </div>
                       </div>
-                      <div className="text-right text-xs text-slate-500">
-                        <p>{formatTime(transition.at)}</p>
-                        <p className="mt-1 font-mono text-slate-600">{job.jobId.slice(0, 8)}</p>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-4 rounded-2xl border border-dashed border-white/10 bg-slate-950/50 px-4 py-6 text-sm text-slate-500">
-                State transitions will appear here as soon as jobs move through the pipeline.
-              </p>
-            )}
-          </article>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 rounded-2xl border border-dashed border-white/10 bg-slate-950/50 px-4 py-6 text-sm text-slate-500">
+                  State transitions will appear here as soon as jobs move through the pipeline.
+                </p>
+              )}
+            </article>
+          </div>
         </section>
 
         {/* Pipeline + Findings grid */}

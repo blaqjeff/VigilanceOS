@@ -4,6 +4,7 @@ import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
 import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 import { getIntegrationReadiness, getReadinessSnapshot } from "../../readiness.js";
+import { ensureScoutWatcher, getScoutWatcherSnapshot, refreshScoutWatcher } from "../../scout/watcher.js";
 import type { IngestionResult } from "../../pipeline/types.js";
 import { formatAuditCompletionAlert, sendTelegramAlert } from "../../telegram/ops.js";
 import {
@@ -276,6 +277,56 @@ const readinessRoute: Route = {
 };
 
 // ---------------------------------------------------------------------------
+// GET /vigilance/scout
+// ---------------------------------------------------------------------------
+const scoutRoute: Route = {
+  name: "vigilance-scout-status",
+  path: "/vigilance/scout",
+  type: "GET",
+  public: true,
+  handler: async (_req: any, res: any, runtime: any) => {
+    try {
+      ensureScoutWatcher(runtime);
+      return json(res, 200, { success: true, data: getScoutWatcherSnapshot() });
+    } catch (e) {
+      logger.error(`[UIBridge] scout snapshot failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// POST /vigilance/scout/refresh
+// ---------------------------------------------------------------------------
+const scoutRefreshRoute: Route = {
+  name: "vigilance-scout-refresh",
+  path: "/vigilance/scout/refresh",
+  type: "POST",
+  public: true,
+  handler: async (req: any, res: any, runtime: any) => {
+    try {
+      ensureScoutWatcher(runtime);
+      const result = await refreshScoutWatcher(runtime, {
+        reason: "ui manual refresh",
+        roomId: getRoomId(req),
+        userId: getUserId(req),
+      });
+
+      const status = result.success ? 200 : result.blocked ? 503 : 500;
+      return json(res, status, {
+        success: result.success,
+        blocked: result.blocked,
+        message: result.message,
+        data: result.snapshot,
+      });
+    } catch (e) {
+      logger.error(`[UIBridge] scout refresh failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // GET /vigilance/jobs — list all jobs (optionally filtered by state)
 // ---------------------------------------------------------------------------
 const jobsListRoute: Route = {
@@ -402,6 +453,8 @@ export const uiBridgePlugin: Plugin = {
     createTargetRoute,
     approveTargetRoute,
     runAuditRoute,
+    scoutRoute,
+    scoutRefreshRoute,
     feedRoute,
     findingsRoute,
     readinessRoute,
