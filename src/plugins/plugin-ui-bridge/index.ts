@@ -33,6 +33,14 @@ function getUserId(req: any): string | undefined {
   return v ? String(v) : undefined;
 }
 
+async function persistCompatMemory(task: string, writer: () => Promise<void>) {
+  try {
+    await writer();
+  } catch (error) {
+    logger.warn(`[UIBridge] ${task} memory persistence skipped: ${error}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // POST /vigilance/targets — submit a new target (creates job)
 // ---------------------------------------------------------------------------
@@ -63,8 +71,10 @@ const createTargetRoute: Route = {
       // Immediately move to pending_approval
       const updatedJob = transitionJob(job.jobId, "pending_approval");
 
-      // Also persist to ElizaOS memory for backward compat / search
-      await writeTarget(runtime, { roomId, userId, target, scoutData });
+      // Preserve job-store success even if legacy memory persistence fails.
+      await persistCompatMemory("target", () =>
+        writeTarget(runtime, { roomId, userId, target, scoutData })
+      );
 
       return json(res, 200, { success: true, data: { job: updatedJob, target } });
     } catch (e) {
@@ -209,7 +219,9 @@ const runAuditRoute: Route = {
 
       // Transition to reviewing
       transitionJob(job.jobId, "reviewing", { report });
-      await writeAudit(runtime, { roomId, userId, target: job.target, report });
+      await persistCompatMemory("audit", () =>
+        writeAudit(runtime, { roomId, userId, target: job.target, report })
+      );
 
       let verdict;
       try {
@@ -234,12 +246,16 @@ const runAuditRoute: Route = {
       // Cleanup cloned repos after audit+review completes
       if (ingestion) cleanupIngestion(ingestion);
 
-      await writeReview(runtime, { roomId, userId, target: job.target, report, verdict });
+      await persistCompatMemory("review", () =>
+        writeReview(runtime, { roomId, userId, target: job.target, report, verdict })
+      );
 
       // Transition to terminal state
       if (verdict.verdict === "publish") {
         const finalJob = transitionJob(job.jobId, "published", { verdict });
-        await writeFinding(runtime, { roomId, userId, target: job.target, report, verdict });
+        await persistCompatMemory("finding", () =>
+          writeFinding(runtime, { roomId, userId, target: job.target, report, verdict })
+        );
         await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
         return json(res, 200, { success: true, data: { job: finalJob } });
       } else if (verdict.verdict === "needs_human_review") {
