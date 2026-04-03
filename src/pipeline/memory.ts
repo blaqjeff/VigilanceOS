@@ -19,6 +19,22 @@ type DocumentMemoryInput = {
   unique?: boolean;
 };
 
+function formatPercent(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function proofLabel(report: AuditReport): string {
+  return report.evidence.proofLevel.replace(/_/g, " ");
+}
+
+function reproductionSummary(report: AuditReport): string {
+  if (!report.evidence.reproduction.available || report.evidence.reproduction.steps.length === 0) {
+    return "No guided reproduction steps are available yet.";
+  }
+
+  return report.evidence.reproduction.steps.slice(0, 3).join(" -> ");
+}
+
 export async function createDocumentMemory(
   runtime: IAgentRuntime,
   input: DocumentMemoryInput
@@ -97,6 +113,12 @@ export async function writeAudit(
     `Target: ${target.displayName}`,
     `Title: ${report.title}`,
     `Severity: ${report.severity}`,
+    `Auditor Confidence: ${formatPercent(report.confidence)}`,
+    `Proof Level: ${proofLabel(report)}`,
+    `Evidence: ${report.evidence.summary}`,
+    `Impact: ${report.impact}`,
+    report.whyFlagged.length ? `Why Flagged: ${report.whyFlagged.join(" | ")}` : "",
+    `Reproduction: ${reproductionSummary(report)}`,
     report.description,
   ].join("\n");
 
@@ -131,8 +153,11 @@ export async function writeReview(
   const text = [
     `REVIEW_REPORT TARGET_ID:${target.targetId}`,
     `Target: ${target.displayName}`,
+    `Title: ${report.title}`,
+    `Severity: ${report.severity}`,
+    `Proof Level: ${proofLabel(report)}`,
     `Verdict: ${verdict.verdict}`,
-    `Confidence: ${verdict.confidence}`,
+    `Reviewer Confidence: ${formatPercent(verdict.confidence)}`,
     verdict.rationale,
   ].join("\n");
 
@@ -169,6 +194,10 @@ export async function writeFinding(
     `Target: ${target.displayName}`,
     `Title: ${report.title}`,
     `Severity: ${report.severity}`,
+    `Auditor Confidence: ${formatPercent(report.confidence)}`,
+    `Reviewer Confidence: ${formatPercent(verdict.confidence)}`,
+    `Proof Level: ${proofLabel(report)}`,
+    `Evidence: ${report.evidence.summary}`,
     verdict.rationale,
   ].join("\n");
 

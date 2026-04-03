@@ -454,22 +454,29 @@ Done when:
 
 - ✅ The engine can produce stronger-than-generic findings on controlled or suitable EVM targets
 
-### 7. Enforce evidence standards for findings
+### 7. Enforce evidence standards for findings â€” âœ… COMPLETED
 
 Goal:
 
 Prevent polished speculation from becoming “findings.”
 
-What to do:
+Implementation summary:
 
-- Require stronger proof thresholds for critical/high
-- Allow code-path proof plus confidence for medium/low
-- Separate evidence generation from report rendering
-- Make findings include affected scope, why flagged, confidence, remediation, and reproduction guidance
+- Updated `src/pipeline/types.ts` with structured evidence primitives: `EvidenceBundle`, `EvidenceTrace`, `EvidenceArtifact`, `ReproductionGuide`, explicit proof levels, and auditor confidence / impact / why-flagged fields on `AuditReport`
+- Refactored `src/pipeline/audit.ts` so evidence generation is separate from report rendering:
+  - analyzer signals are normalized into grounded traces
+  - reports now carry structured evidence, affected surface, why-flagged reasons, impact, and reproduction guidance
+  - reviewer output is gated by `enforceEvidencePolicy()` so critical/high findings only publish with replayable proof, while medium/low can publish with code-path evidence
+- Updated `src/pipeline/memory.ts` so audit/review/finding memories now store proof level, auditor confidence, evidence summary, impact, and reproduction guidance instead of narrative-only summaries
+- Updated `src/plugins/plugin-auditor-reviewer/index.ts` so draft audit callbacks now include auditor confidence, proof level, evidence summary, impact, and why-flagged reasons
+- Updated `ui/src/app/page.tsx` so the operator console is visibly evidence-first:
+  - audit detail modal now shows auditor confidence, proof level, evidence-bar status, impact, grounded traces, artifacts, and reproduction guidance
+  - finding cards now surface proof level and auditor confidence alongside reviewer confidence
+- Verification: `bunx tsc -p tsconfig.json` and `bun run build:ui` both pass cleanly
 
 Done when:
 
-- Reports are visibly evidence-first and not just narrative-first
+- âœ… Reports are visibly evidence-first and not just narrative-first
 
 ### 8. Make the Reviewer a real filter
 
@@ -590,13 +597,13 @@ If continuing in a new thread, start here:
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
 3. Verify the current stack in `C:\VigilanceOS`
-4. Implement ranked build order item 1: harden external integration readiness checks
+4. Implement ranked build order item 8: make the Reviewer a real filter
 
 That work should include:
 
-- explicit MCP dependency diagnostics
-- explicit model auth diagnostics
-- explicit Telegram config diagnostics
-- clear readiness reporting for developers and operators
+- increasing reviewer strictness for critical/high beyond the current evidence gate
+- separating `review-passed` from a secondary `needs-human-review` or similar uncertain state
+- preserving useful medium-confidence findings without letting them pollute the primary published gallery
+- reflecting that distinction clearly in the UI/API surfaces
 
-After that, move directly into the golden path and real audit wedge work.
+After that, move directly into the next ranked operator-surface and Telegram work.

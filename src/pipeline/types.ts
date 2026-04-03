@@ -1,5 +1,9 @@
 export type TargetType = "immunefi" | "github" | "local";
 
+export type FindingSeverity = "low" | "medium" | "high" | "critical";
+
+export type PocFramework = "foundry" | "hardhat" | "anchor" | "generic";
+
 export type Target = {
   targetId: string;
   type: TargetType;
@@ -9,16 +13,59 @@ export type Target = {
   metadata?: Record<string, unknown>;
 };
 
+export type EvidenceProofLevel =
+  | "runnable_poc"
+  | "guided_replay"
+  | "code_path"
+  | "context_only";
+
+export type EvidenceTrace = {
+  vulnerabilityClass: string;
+  severityHint: FindingSeverity;
+  file: string;
+  line: number;
+  finding: string;
+  confirmationHint: string;
+  snippet?: string;
+};
+
+export type EvidenceArtifact = {
+  type: "static_analysis" | "poc";
+  label: string;
+  description: string;
+  location?: string;
+};
+
+export type ReproductionGuide = {
+  available: boolean;
+  framework?: PocFramework;
+  steps: string[];
+  notes?: string;
+};
+
+export type EvidenceBundle = {
+  proofLevel: EvidenceProofLevel;
+  meetsSeverityBar: boolean;
+  summary: string;
+  traces: EvidenceTrace[];
+  artifacts: EvidenceArtifact[];
+  reproduction: ReproductionGuide;
+};
+
 export type AuditReport = {
   reportId: string;
   targetId: string;
   title: string;
-  severity: "low" | "medium" | "high" | "critical";
+  severity: FindingSeverity;
+  confidence: number; // auditor confidence, 0..1
   description: string;
+  impact: string;
+  whyFlagged: string[];
   affectedSurface?: string[];
   recommendations?: string[];
+  evidence: EvidenceBundle;
   poc?: {
-    framework: "foundry" | "hardhat" | "anchor" | "generic";
+    framework: PocFramework;
     text: string;
   };
 };

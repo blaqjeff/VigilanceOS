@@ -160,7 +160,14 @@ export const executeAuditAction: Action = {
     const draftText = [
       `### VULNERABILITY (Severity: ${report.severity.toUpperCase()})`,
       `**Title:** ${report.title}`,
+      `**Auditor Confidence:** ${Math.round(report.confidence * 100)}%`,
+      `**Proof Level:** ${report.evidence.proofLevel.replace(/_/g, " ")}`,
+      `**Evidence Summary:** ${report.evidence.summary}`,
       `**Description:** ${report.description}`,
+      `**Impact:** ${report.impact}`,
+      report.whyFlagged.length
+        ? `**Why Flagged:**\n- ${report.whyFlagged.join("\n- ")}`
+        : "",
       report.recommendations?.length
         ? `**Recommendations:**\n- ${report.recommendations.join("\n- ")}`
         : "",

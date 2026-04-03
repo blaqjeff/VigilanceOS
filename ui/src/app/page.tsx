@@ -23,14 +23,57 @@ type Target = {
   url?: string;
 };
 
+type EvidenceProofLevel =
+  | "runnable_poc"
+  | "guided_replay"
+  | "code_path"
+  | "context_only";
+
+type EvidenceTrace = {
+  vulnerabilityClass: string;
+  severityHint: "low" | "medium" | "high" | "critical";
+  file: string;
+  line: number;
+  finding: string;
+  confirmationHint: string;
+  snippet?: string;
+};
+
+type EvidenceArtifact = {
+  type: "static_analysis" | "poc";
+  label: string;
+  description: string;
+  location?: string;
+};
+
+type ReproductionGuide = {
+  available: boolean;
+  framework?: "foundry" | "hardhat" | "anchor" | "generic";
+  steps: string[];
+  notes?: string;
+};
+
+type EvidenceBundle = {
+  proofLevel: EvidenceProofLevel;
+  meetsSeverityBar: boolean;
+  summary: string;
+  traces: EvidenceTrace[];
+  artifacts: EvidenceArtifact[];
+  reproduction: ReproductionGuide;
+};
+
 type AuditReport = {
   reportId: string;
   targetId: string;
   title: string;
   severity: "low" | "medium" | "high" | "critical";
+  confidence?: number;
   description: string;
+  impact?: string;
+  whyFlagged?: string[];
   affectedSurface?: string[];
   recommendations?: string[];
+  evidence?: EvidenceBundle;
   poc?: { framework: string; text: string };
 };
 
@@ -135,6 +178,37 @@ function severityTone(severity: string): string {
     default:
       return "border-slate-400/30 bg-slate-400/10 text-slate-300";
   }
+}
+
+function proofTone(proofLevel: EvidenceProofLevel): string {
+  switch (proofLevel) {
+    case "runnable_poc":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "guided_replay":
+      return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
+    case "code_path":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    default:
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  }
+}
+
+function confidenceTone(confidence: number): string {
+  if (confidence >= 0.75) {
+    return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  }
+  if (confidence >= 0.5) {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  }
+  return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+}
+
+function proofLabel(proofLevel: EvidenceProofLevel): string {
+  return proofLevel.replace(/_/g, " ");
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 }
 
 function formatTime(iso: string): string {
@@ -318,14 +392,142 @@ function JobDetailPanel({
         {/* Report */}
         {job.report && (
           <div className="mt-6 space-y-4">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <h3 className="text-lg font-semibold text-white">Audit Report</h3>
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${severityTone(job.report.severity)}`}>
                 {job.report.severity}
               </span>
+              {typeof job.report.confidence === "number" && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${confidenceTone(job.report.confidence)}`}>
+                  auditor {formatPercent(job.report.confidence)}
+                </span>
+              )}
+              {job.report.evidence && (
+                <>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${proofTone(job.report.evidence.proofLevel)}`}>
+                    {proofLabel(job.report.evidence.proofLevel)}
+                  </span>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${
+                    job.report.evidence.meetsSeverityBar
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                      : "border-red-500/30 bg-red-500/10 text-red-300"
+                  }`}>
+                    {job.report.evidence.meetsSeverityBar ? "meets evidence bar" : "below evidence bar"}
+                  </span>
+                </>
+              )}
             </div>
             <h4 className="text-base font-medium text-slate-200">{job.report.title}</h4>
             <p className="text-sm leading-6 text-slate-400">{job.report.description}</p>
+
+            {job.report.impact && (
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <p className="text-xs uppercase tracking-widest text-slate-500">Impact</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{job.report.impact}</p>
+              </div>
+            )}
+
+            {job.report.whyFlagged && job.report.whyFlagged.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Why Flagged</p>
+                <ul className="space-y-2 text-sm text-slate-400">
+                  {job.report.whyFlagged.map((reason, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400/50" />
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {job.report.evidence && (
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs uppercase tracking-widest text-slate-500">Evidence Summary</p>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${proofTone(job.report.evidence.proofLevel)}`}>
+                    {proofLabel(job.report.evidence.proofLevel)}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{job.report.evidence.summary}</p>
+              </div>
+            )}
+
+            {job.report.evidence && job.report.evidence.traces.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Grounded Traces</p>
+                <div className="space-y-3">
+                  {job.report.evidence.traces.map((trace, i) => (
+                    <div key={`${trace.file}-${trace.line}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${severityTone(trace.severityHint)}`}>
+                          {trace.severityHint}
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-widest text-slate-300">
+                          {trace.vulnerabilityClass.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-xs text-slate-500">{trace.file}:{trace.line}</span>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-300">{trace.finding}</p>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">{trace.confirmationHint}</p>
+                      {trace.snippet && (
+                        <pre className="mt-3 overflow-x-auto rounded-xl border border-white/5 bg-slate-950 p-3 text-xs leading-5 text-slate-300 font-mono whitespace-pre-wrap">
+                          {trace.snippet}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {job.report.evidence && job.report.evidence.reproduction.steps.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Reproduction Guidance</p>
+                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                  {job.report.evidence.reproduction.framework && (
+                    <p className="text-xs uppercase tracking-widest text-cyan-300">
+                      {job.report.evidence.reproduction.framework}
+                    </p>
+                  )}
+                  <ul className="mt-2 space-y-2 text-sm text-slate-400">
+                    {job.report.evidence.reproduction.steps.map((step, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="mt-0.5 text-cyan-400">{i + 1}.</span>
+                        <span>{step}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {job.report.evidence.reproduction.notes && (
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      {job.report.evidence.reproduction.notes}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {job.report.evidence && job.report.evidence.artifacts.length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Artifacts</p>
+                <div className="space-y-2">
+                  {job.report.evidence.artifacts.map((artifact, i) => (
+                    <div key={`${artifact.type}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-white/10 bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-widest text-slate-300">
+                          {artifact.type.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-sm font-medium text-slate-200">{artifact.label}</span>
+                        {artifact.location && (
+                          <span className="text-xs text-slate-500">{artifact.location}</span>
+                        )}
+                      </div>
+                      <p className="mt-2 text-sm text-slate-400">{artifact.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {job.report.affectedSurface && job.report.affectedSurface.length > 0 && (
               <div>
@@ -904,13 +1106,25 @@ export default function Home() {
                   onClick={() => setSelectedJob(job)}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "high")}`}>
-                      {job.report?.severity ?? "high"}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "high")}`}>
+                        {job.report?.severity ?? "high"}
+                      </span>
+                      {job.report?.evidence && (
+                        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
+                          {proofLabel(job.report.evidence.proofLevel)}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
+                      {job.report && typeof job.report.confidence === "number" && (
+                        <span className="text-xs text-cyan-300">
+                          auditor {formatPercent(job.report.confidence)}
+                        </span>
+                      )}
                       {job.verdict && (
                         <span className="text-xs text-emerald-400">
-                          {Math.round(job.verdict.confidence * 100)}%
+                          reviewer {formatPercent(job.verdict.confidence)}
                         </span>
                       )}
                       <span className="text-xs text-slate-500">{job.target.displayName}</span>
@@ -919,6 +1133,11 @@ export default function Home() {
                   <h3 className="mt-4 text-lg font-semibold text-white">
                     {job.report?.title ?? "Finding"}
                   </h3>
+                  {job.report?.evidence && (
+                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-cyan-300">
+                      {job.report.evidence.summary}
+                    </p>
+                  )}
                   <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
                     {job.report?.description ?? ""}
                   </p>
@@ -963,6 +1182,11 @@ export default function Home() {
                         <h4 className="text-sm font-medium text-slate-300">
                           {job.report?.title ?? job.target.displayName}
                         </h4>
+                        {job.report?.evidence && (
+                          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                            {proofLabel(job.report.evidence.proofLevel)} evidence
+                          </p>
+                        )}
                         <p className="mt-1 text-xs text-slate-500">
                           {job.verdict?.rationale?.slice(0, 100)}…
                         </p>
