@@ -530,24 +530,32 @@ Done when:
 
 - ✅ A user can understand the full pipeline state from the UI alone
 
-### 10. Finish Telegram MVP commands and alerts
+### 10. Finish Telegram MVP commands and alerts — ✅ COMPLETED
 
 Goal:
 
 Make Telegram a real control surface.
 
-What to do:
+Implementation summary:
 
-- deliver Scout alerts for discovered targets
-- deliver audit-finished alerts
-- support `/approve`
-- support `/report <audit>`
-- support `/findings`
-- add `/status <audit>` if time allows
+- Added shared Telegram delivery/formatting helpers in `src/telegram/ops.ts`:
+  - captures Telegram room/channel context from incoming messages
+  - formats Scout alerts, audit-complete alerts, `/status`, `/report`, and `/findings` responses
+  - supports proactive delivery to the originating Telegram room and optional default `TELEGRAM_ALERT_CHAT_ID`
+- Updated `src/plugins/plugin-hitl/index.ts` so Telegram is now a real operator surface:
+  - `/approve <job>` now resolves the pending job, approves it, and immediately starts the audit flow
+  - `/report <audit>` returns a concise report view for the latest or requested job
+  - `/findings` lists recent published findings plus the human-review queue
+  - `/status <audit>` was added as the nice-to-have command and returns live lifecycle state, confidence, and next action
+  - approval requests now return explicit Telegram-friendly command hints (`/approve`, `/status`)
+- Updated `src/plugins/plugin-scout/index.ts` so Scout discoveries carry Telegram targeting context and produce operator-facing alert text with direct follow-up commands
+- Updated `src/plugins/plugin-ui-bridge/index.ts` so callback-less UI-triggered audits can still push completion alerts into Telegram when a Telegram target is known/configured
+- Updated `.env.example` with optional `TELEGRAM_ALERT_CHAT_ID` guidance for proactive alert routing
+- Verification: `bunx tsc -p tsconfig.json` and `bun run build:ui` both pass cleanly
 
 Done when:
 
-- A user can reasonably monitor and approve work from Telegram
+- ✅ A user can reasonably monitor and approve work from Telegram
 
 ### 11. Implement Scout as scheduled polling plus manual refresh
 
@@ -612,13 +620,15 @@ If continuing in a new thread, start here:
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
 3. Verify the current stack in `C:\VigilanceOS`
-4. Implement ranked build order item 10: finish Telegram MVP commands and alerts
+4. Implement ranked build order item 11: Scout as scheduled polling plus manual refresh
 
 That work should include:
 
-- delivering alerting for newly discovered Scout targets and finished audits
-- supporting `/approve`, `/report <audit>`, and `/findings`
-- adding `/status <audit>` if it comes together cleanly
-- making Telegram good enough to monitor and approve work away from the UI
+- scheduled polling
+- manual refresh
+- dedupe discovered programs
+- extracting scope and reward context
+- classifying across all Scout categories
+- feeding both UI and Telegram
 
-After that, move directly into Telegram MVP completion and Scout scheduling work.
+After that, move directly into controlled demo target preparation.

@@ -14,9 +14,15 @@ import { createDocumentMemory } from "../../pipeline/memory.js";
 import { getIntegrationReadiness } from "../../readiness.js";
 import {
   createJob,
+  getJob,
   getJobByTargetId,
   transitionJob,
 } from "../../pipeline/jobStore.js";
+import {
+  attachTelegramContext,
+  formatScoutDiscoveryAlert,
+  sendTelegramAlert,
+} from "../../telegram/ops.js";
 
 type ScoutData = {
   scoutMode: "DEMO" | "LIVE";
@@ -29,6 +35,8 @@ type ScoutData = {
   rewards?: unknown;
   maxBounty?: unknown;
   githubRepositories?: string[];
+  telegramRoomId?: string;
+  telegramChannelId?: string;
 };
 
 function extractToolText(toolResult: unknown): string {
@@ -96,7 +104,7 @@ export const scoutAction: Action = {
     const isDemoMode = process.env.DEMO_MODE === "true";
     if (isDemoMode) {
       logger.info("[Scout] DEMO MODE DETECTED: Utilizing Damn Vulnerable DeFi local target.");
-      const scoutData: ScoutData = {
+      const scoutData = await attachTelegramContext(runtime, message, {
         scoutMode: "DEMO",
         query: message.content?.text || "DeFi protocols",
         projectName: "Damn Vulnerable DeFi",
@@ -106,14 +114,13 @@ export const scoutAction: Action = {
         rewards: { note: "High/Critical payouts valid (demo)" },
         maxBounty: "$200,000",
         githubRepositories: [],
-      };
+      }) as ScoutData;
 
       const { jobId, isNew } = ensureJobForTarget(scoutData.projectName, scoutData);
+      const job = getJob(jobId);
 
-      const reportText = [
-        `SCOUT REPORT (DEMO): Found Immunefi-like scope for '${scoutData.projectName}'.`,
-        `High/Critical payouts valid. Job: ${jobId}${isNew ? " (new)" : " (existing)"}.`,
-      ].join(" ");
+      const reportText =
+        job?.target ? formatScoutDiscoveryAlert(job, isNew) : `SCOUT ALERT\nJob: ${jobId}`;
 
       try {
         await createDocumentMemory(runtime, {
@@ -130,6 +137,10 @@ export const scoutAction: Action = {
         });
       } catch (e) {
         logger.warn(`[Scout] Failed to persist DEMO scout memory: ${e}`);
+      }
+
+      if ((message.content as any)?.source !== "telegram") {
+        await sendTelegramAlert(runtime, scoutData, reportText);
       }
 
       if (callback) await callback({ text: reportText, action: "SCOUT_COMPLETE" });
@@ -202,7 +213,7 @@ export const scoutAction: Action = {
     const maxBountyEntry = maxBountyJson?.result?.[0];
     const reposEntry = reposJson?.result?.[0];
 
-    const scoutData: ScoutData = {
+    const scoutData = (await attachTelegramContext(runtime, message, {
       scoutMode: "LIVE",
       query: targetQuery,
       projectId: firstProjectId,
@@ -214,28 +225,19 @@ export const scoutAction: Action = {
         maxBountyEntry?.max_bounty ?? maxBountyEntry?.maxBounty ?? maxBountyJson,
       githubRepositories:
         reposEntry?.github_repositories ?? reposEntry?.githubRepos ?? [],
-    };
+    })) as ScoutData;
 
     const { jobId, isNew } = ensureJobForTarget(
       scoutData.projectId || scoutData.projectName,
       scoutData
     );
+    const job = getJob(jobId);
 
     const projectNameLabel = scoutData.projectId || scoutData.projectName;
-    const rewardLabel =
-      typeof scoutData.maxBounty === "string"
-        ? scoutData.maxBounty
-        : scoutData.maxBounty
-          ? JSON.stringify(scoutData.maxBounty)
-          : "unknown";
-
-    const reportText = [
-      "SCOUT REPORT:",
-      `Target: ${projectNameLabel}`,
-      `Scope extracted into memory (impacts + rewards).`,
-      `Reward: ${rewardLabel}.`,
-      `Job: ${jobId}${isNew ? " (new)" : " (existing)"}.`,
-    ].join("\n");
+    const reportText =
+      job?.target
+        ? formatScoutDiscoveryAlert(job, isNew)
+        : ["SCOUT ALERT", `Target: ${projectNameLabel}`, `Job: ${jobId}`].join("\n");
 
     try {
       await createDocumentMemory(runtime, {
@@ -253,6 +255,10 @@ export const scoutAction: Action = {
       });
     } catch (e) {
       logger.warn(`[Scout] Failed to persist LIVE scout memory: ${e}`);
+    }
+
+    if ((message.content as any)?.source !== "telegram") {
+      await sendTelegramAlert(runtime, scoutData, reportText);
     }
 
     if (callback) await callback({ text: reportText, action: "SCOUT_COMPLETE" });

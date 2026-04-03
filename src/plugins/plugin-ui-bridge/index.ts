@@ -5,6 +5,7 @@ import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 import { getIntegrationReadiness, getReadinessSnapshot } from "../../readiness.js";
 import type { IngestionResult } from "../../pipeline/types.js";
+import { formatAuditCompletionAlert, sendTelegramAlert } from "../../telegram/ops.js";
 import {
   createJob,
   findApprovedJob,
@@ -238,12 +239,15 @@ const runAuditRoute: Route = {
       if (verdict.verdict === "publish") {
         const finalJob = transitionJob(job.jobId, "published", { verdict });
         await writeFinding(runtime, { roomId, userId, target: job.target, report, verdict });
+        await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
         return json(res, 200, { success: true, data: { job: finalJob } });
       } else if (verdict.verdict === "needs_human_review") {
         const finalJob = transitionJob(job.jobId, "needs_human_review", { verdict });
+        await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
         return json(res, 200, { success: true, data: { job: finalJob } });
       } else {
         const finalJob = transitionJob(job.jobId, "discarded", { verdict });
+        await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
         return json(res, 200, { success: true, data: { job: finalJob } });
       }
     } catch (e) {

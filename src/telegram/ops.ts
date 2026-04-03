@@ -1,0 +1,268 @@
+import { logger, type IAgentRuntime, type Memory, type TargetInfo } from "@elizaos/core";
+
+import type { AuditJob } from "../pipeline/types.js";
+import { getIntegrationReadiness } from "../readiness.js";
+
+function asText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function truncate(value: unknown, max = 280): string {
+  const text = asText(value);
+  if (!text) return "";
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3)).trim()}...`;
+}
+
+function formatPercent(value?: number): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "n/a";
+  }
+
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function stateLabel(state: string): string {
+  return state.replace(/_/g, " ");
+}
+
+function proofLabel(job: AuditJob): string {
+  return job.report?.evidence?.proofLevel?.replace(/_/g, " ") ?? "n/a";
+}
+
+function commandText(message: Memory): string {
+  return asText((message.content as any)?.text);
+}
+
+function recommendationLines(job: AuditJob, limit = 3): string[] {
+  return (job.report?.recommendations ?? [])
+    .slice(0, limit)
+    .map((item, index) => `${index + 1}. ${truncate(item, 140)}`);
+}
+
+function fromScoutData(
+  scoutData?: Record<string, unknown> | null
+): { roomId?: string; channelId?: string } | null {
+  if (!scoutData) return null;
+
+  const roomId = asText((scoutData as any).telegramRoomId);
+  const channelId =
+    asText((scoutData as any).telegramChannelId) ||
+    asText(process.env.TELEGRAM_ALERT_CHAT_ID);
+
+  if (!roomId && !channelId) {
+    return null;
+  }
+
+  return {
+    roomId: roomId || undefined,
+    channelId: channelId || undefined,
+  };
+}
+
+export async function attachTelegramContext(
+  runtime: IAgentRuntime,
+  message: Memory,
+  scoutData?: Record<string, unknown> | null
+): Promise<Record<string, unknown>> {
+  const merged = { ...(scoutData ?? {}) };
+  if ((message.content as any)?.source !== "telegram") {
+    return merged;
+  }
+
+  const roomId = asText((message as any).roomId);
+  if (!roomId) {
+    return merged;
+  }
+
+  merged.telegramRoomId = roomId;
+
+  try {
+    const room = await runtime.getRoom(roomId as any);
+    if (room?.channelId) {
+      merged.telegramChannelId = String(room.channelId);
+    }
+  } catch (error) {
+    logger.warn(
+      `[TelegramOps] Failed to resolve Telegram room metadata for ${roomId}: ${error}`
+    );
+  }
+
+  return merged;
+}
+
+export async function sendTelegramAlert(
+  runtime: IAgentRuntime,
+  scoutData: Record<string, unknown> | null | undefined,
+  text: string
+): Promise<boolean> {
+  const readiness = getIntegrationReadiness("telegram");
+  if (!readiness.available) {
+    return false;
+  }
+
+  const target = fromScoutData(scoutData);
+  if (!target) {
+    return false;
+  }
+
+  const targetInfo: TargetInfo = {
+    source: "telegram",
+    roomId: target.roomId as any,
+    channelId: target.channelId,
+  };
+
+  try {
+    await runtime.sendMessageToTarget(targetInfo, { text });
+    return true;
+  } catch (error) {
+    logger.warn(`[TelegramOps] Failed to send Telegram alert: ${error}`);
+    return false;
+  }
+}
+
+export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string {
+  const rewardLabel = truncate((job.scoutData as any)?.maxBounty, 120);
+  const repoList = Array.isArray((job.scoutData as any)?.githubRepositories)
+    ? ((job.scoutData as any)?.githubRepositories as string[])
+    : [];
+
+  return [
+    isNew ? "SCOUT ALERT: new target discovered" : "SCOUT ALERT: existing target refreshed",
+    `Target: ${job.target.displayName}`,
+    `Job: ${job.jobId}`,
+    `State: ${stateLabel(job.state)}`,
+    rewardLabel ? `Reward: ${rewardLabel}` : "",
+    repoList.length > 0 ? `Repo: ${truncate(repoList[0], 120)}` : "",
+    `Approve and run: /approve ${job.jobId}`,
+    `Status: /status ${job.jobId}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatAuditCompletionAlert(job: AuditJob): string {
+  const headline =
+    job.state === "published"
+      ? "AUDIT COMPLETE: published"
+      : job.state === "needs_human_review"
+        ? "AUDIT COMPLETE: human review required"
+        : job.state === "discarded"
+          ? "AUDIT COMPLETE: discarded by reviewer"
+          : job.state === "failed"
+            ? "AUDIT COMPLETE: failed"
+            : `AUDIT COMPLETE: ${stateLabel(job.state)}`;
+
+  return [
+    headline,
+    `Target: ${job.target.displayName}`,
+    `Job: ${job.jobId}`,
+    job.report?.title ? `Finding: ${truncate(job.report.title, 140)}` : "",
+    job.report?.severity ? `Severity: ${job.report.severity}` : "",
+    job.report ? `Proof: ${proofLabel(job)}` : "",
+    job.verdict
+      ? `Reviewer: ${stateLabel(job.verdict.verdict)} (${formatPercent(job.verdict.confidence)})`
+      : "",
+    job.error ? `Error: ${truncate(job.error, 180)}` : "",
+    `Report: /report ${job.jobId}`,
+    `Status: /status ${job.jobId}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatJobStatusMessage(job: AuditJob): string {
+  const lastTransition = job.stateHistory[job.stateHistory.length - 1];
+
+  return [
+    "AUDIT STATUS",
+    `Target: ${job.target.displayName}`,
+    `Job: ${job.jobId}`,
+    `State: ${stateLabel(job.state)}`,
+    lastTransition
+      ? `Latest transition: ${stateLabel(lastTransition.from)} -> ${stateLabel(lastTransition.to)}`
+      : "",
+    job.report?.severity ? `Severity: ${job.report.severity}` : "",
+    job.report ? `Auditor confidence: ${formatPercent(job.report.confidence)}` : "",
+    job.verdict
+      ? `Reviewer: ${stateLabel(job.verdict.verdict)} (${formatPercent(job.verdict.confidence)})`
+      : "",
+    job.error ? `Error: ${truncate(job.error, 180)}` : "",
+    job.state === "pending_approval" ? `Approve and run: /approve ${job.jobId}` : "",
+    job.report ? `Report: /report ${job.jobId}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatJobReportMessage(job: AuditJob): string {
+  if (!job.report) {
+    return formatJobStatusMessage(job);
+  }
+
+  const lines = [
+    "AUDIT REPORT",
+    `Target: ${job.target.displayName}`,
+    `Job: ${job.jobId}`,
+    `State: ${stateLabel(job.state)}`,
+    `Title: ${truncate(job.report.title, 140)}`,
+    `Severity: ${job.report.severity}`,
+    `Auditor confidence: ${formatPercent(job.report.confidence)}`,
+    `Proof: ${proofLabel(job)}`,
+    job.verdict
+      ? `Reviewer: ${stateLabel(job.verdict.verdict)} (${formatPercent(job.verdict.confidence)})`
+      : "",
+    `Summary: ${truncate(job.report.description, 340)}`,
+    job.report.impact ? `Impact: ${truncate(job.report.impact, 220)}` : "",
+  ];
+
+  const recommendations = recommendationLines(job);
+  if (recommendations.length > 0) {
+    lines.push("Recommendations:");
+    lines.push(...recommendations);
+  }
+
+  lines.push(`Status: /status ${job.jobId}`);
+  return lines.filter(Boolean).join("\n");
+}
+
+export function formatFindingsDigest(
+  published: AuditJob[],
+  needsHumanReview: AuditJob[]
+): string {
+  const lines = ["FINDINGS DIGEST"];
+
+  if (published.length === 0 && needsHumanReview.length === 0) {
+    lines.push("No reviewed findings are available yet.");
+    return lines.join("\n");
+  }
+
+  if (published.length > 0) {
+    lines.push("Published:");
+    for (const job of published.slice(0, 5)) {
+      lines.push(
+        `- ${job.jobId} | ${job.report?.severity ?? "unknown"} | ${truncate(job.report?.title ?? job.target.displayName, 80)} | /report ${job.jobId}`
+      );
+    }
+  }
+
+  if (needsHumanReview.length > 0) {
+    lines.push("Needs human review:");
+    for (const job of needsHumanReview.slice(0, 5)) {
+      lines.push(
+        `- ${job.jobId} | ${job.report?.severity ?? "unknown"} | ${truncate(job.report?.title ?? job.target.displayName, 80)} | /status ${job.jobId}`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function parseCommandArgument(message: Memory, command: string): string {
+  const text = commandText(message);
+  return text.replace(new RegExp(`^/${command}(?:@\\w+)?`, "i"), "").trim();
+}
+
+export function matchesCommand(message: Memory, command: string): boolean {
+  return new RegExp(`^/${command}(?:@\\w+)?(?:\\s|$)`, "i").test(commandText(message));
+}
