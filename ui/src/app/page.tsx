@@ -231,6 +231,35 @@ function formatDateTime(iso: string): string {
   }
 }
 
+function countArtifactEvidence(report?: AuditReport): string | null {
+  if (!report?.evidence) return null;
+
+  return `${report.evidence.traces.length} traces | ${report.evidence.artifacts.length} artifacts | ${report.evidence.reproduction.steps.length} replay steps`;
+}
+
+function operatorStateCopy(state: AuditJobState): string {
+  switch (state) {
+    case "pending_approval":
+      return "Approval is required before the deeper audit can begin.";
+    case "approved":
+      return "Approved and waiting for the operator to launch the audit.";
+    case "scanning":
+      return "The auditor is tracing code paths and assembling evidence.";
+    case "reviewing":
+      return "The reviewer is pressure-testing the finding before publication.";
+    case "published":
+      return "The finding cleared review and is ready for operator action.";
+    case "needs_human_review":
+      return "The finding is grounded, but an analyst should make the final call.";
+    case "discarded":
+      return "The reviewer rejected this finding as too weak or unsupported.";
+    case "failed":
+      return "The job failed before it could complete the review path.";
+    default:
+      return "The target has entered the queue and is being prepared.";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle step indicator
 // ---------------------------------------------------------------------------
@@ -655,6 +684,57 @@ function activeStateAnimation(state: AuditJobState): string {
   return "";
 }
 
+function OperatorSummaryCard({
+  title,
+  count,
+  tone,
+  description,
+  jobs,
+  emptyLabel,
+  onSelect,
+}: {
+  title: string;
+  count: number;
+  tone: string;
+  description: string;
+  jobs: AuditJob[];
+  emptyLabel: string;
+  onSelect: (job: AuditJob) => void;
+}) {
+  return (
+    <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Operations</p>
+          <h3 className="mt-2 text-lg font-semibold text-white">{title}</h3>
+        </div>
+        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] ${tone}`}>
+          {count}
+        </span>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-slate-300">{description}</p>
+      {jobs.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          {jobs.slice(0, 3).map((job) => (
+            <button
+              key={job.jobId}
+              onClick={() => onSelect(job)}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-left transition hover:border-cyan-400/20"
+            >
+              <span className="truncate text-sm text-slate-200">{job.target.displayName}</span>
+              <span className={`ml-3 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(job.state)}`}>
+                {stateLabel(job.state)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-600">{emptyLabel}</p>
+      )}
+    </article>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
@@ -667,6 +747,7 @@ export default function Home() {
   const [readiness, setReadiness] = React.useState<ReadinessSnapshot | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const roomId = "00000000-0000-0000-0000-000000000000";
 
   const refresh = React.useCallback(async () => {
@@ -682,6 +763,7 @@ export default function Home() {
       setJobs(jobsJson?.data?.jobs ?? []);
       setStats(jobsJson?.data?.stats ?? null);
       setReadiness(readinessJson?.data ?? null);
+      setLastRefreshedAt(new Date().toISOString());
     } catch {
       setActionError("Operator console could not refresh backend state.");
     }
@@ -828,15 +910,31 @@ export default function Home() {
     : "border-amber-500/30 bg-amber-500/10 text-amber-300";
 
   // Group jobs
-  const pendingJobs = jobs.filter((j) => j.state === "pending_approval");
-  const approvedJobs = jobs.filter((j) => j.state === "approved");
-  const activeJobs = jobs.filter((j) => j.state === "scanning" || j.state === "reviewing");
-  const publishedJobs = jobs.filter((j) => j.state === "published");
-  const needsHumanReviewJobs = jobs.filter((j) => j.state === "needs_human_review");
-  const discardedJobs = jobs.filter((j) => j.state === "discarded");
-  const failedJobs = jobs.filter((j) => j.state === "failed");
+  const orderedJobs = [...jobs].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+  const pendingJobs = orderedJobs.filter((j) => j.state === "pending_approval");
+  const approvedJobs = orderedJobs.filter((j) => j.state === "approved");
+  const activeJobs = orderedJobs.filter((j) => j.state === "scanning" || j.state === "reviewing");
+  const publishedJobs = orderedJobs.filter((j) => j.state === "published");
+  const needsHumanReviewJobs = orderedJobs.filter((j) => j.state === "needs_human_review");
+  const discardedJobs = orderedJobs.filter((j) => j.state === "discarded");
+  const failedJobs = orderedJobs.filter((j) => j.state === "failed");
 
   const pipelineJobs = [...pendingJobs, ...approvedJobs, ...activeJobs];
+  const recentTransitions = orderedJobs
+    .flatMap((job) =>
+      job.stateHistory.map((transition, index) => ({
+        key: `${job.jobId}-${index}`,
+        job,
+        transition,
+      }))
+    )
+    .sort(
+      (a, b) =>
+        new Date(b.transition.at).getTime() - new Date(a.transition.at).getTime()
+    )
+    .slice(0, 8);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_35%),linear-gradient(180deg,#020617_0%,#020617_45%,#111827_100%)] text-gray-100 font-sans selection:bg-cyan-500 selection:text-white">
@@ -989,6 +1087,125 @@ export default function Home() {
           )}
         </section>
 
+        {/* Operations overview */}
+        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Operations Snapshot</p>
+                <h2 className="mt-2 text-xl font-semibold text-white">Queue Overview</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  Auto-sync runs every 3 seconds, and this panel shows what needs action now:
+                  approvals, audits ready to launch, active analysis, and uncertain findings awaiting an analyst.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Last Synced</p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {lastRefreshedAt ? formatDateTime(lastRefreshedAt) : "Waiting for backend sync"}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void refresh()}
+                  className="rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-slate-200 transition hover:border-cyan-400/30 hover:text-cyan-200"
+                >
+                  Sync State
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <OperatorSummaryCard
+                title="Awaiting Approval"
+                count={pendingJobs.length}
+                tone="border-amber-500/30 bg-amber-500/10 text-amber-300"
+                description="Targets paused at the human approval gate before deeper audit can begin."
+                jobs={pendingJobs}
+                emptyLabel="No targets need approval"
+                onSelect={setSelectedJob}
+              />
+              <OperatorSummaryCard
+                title="Approved To Run"
+                count={approvedJobs.length}
+                tone="border-blue-500/30 bg-blue-500/10 text-blue-300"
+                description="Targets already approved and ready for the next audit run when the model is available."
+                jobs={approvedJobs}
+                emptyLabel="No approved targets are waiting"
+                onSelect={setSelectedJob}
+              />
+              <OperatorSummaryCard
+                title="Active Analysis"
+                count={activeJobs.length}
+                tone="border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                description="Jobs currently scanning or reviewing with live pipeline visibility."
+                jobs={activeJobs}
+                emptyLabel="No active audits right now"
+                onSelect={setSelectedJob}
+              />
+              <OperatorSummaryCard
+                title="Needs Human Review"
+                count={needsHumanReviewJobs.length}
+                tone="border-amber-500/30 bg-amber-500/10 text-amber-300"
+                description="Grounded findings the reviewer preserved for analyst judgment instead of auto-publishing."
+                jobs={needsHumanReviewJobs}
+                emptyLabel="No findings are waiting on analyst review"
+                onSelect={setSelectedJob}
+              />
+            </div>
+          </div>
+
+          <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Recent Activity</p>
+                <h3 className="mt-2 text-lg font-semibold text-white">Latest Transitions</h3>
+              </div>
+              <span className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">
+                {orderedJobs.length} tracked
+              </span>
+            </div>
+            <p className="mt-4 text-sm leading-6 text-slate-400">
+              The newest state changes appear here so an operator can confirm movement through approval, audit, review, and publication without reading backend logs.
+            </p>
+
+            {recentTransitions.length > 0 ? (
+              <div className="mt-4 space-y-3">
+                {recentTransitions.map(({ key, job, transition }) => (
+                  <button
+                    key={key}
+                    onClick={() => setSelectedJob(job)}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left transition hover:border-cyan-400/20"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-white">{job.target.displayName}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(transition.from)}`}>
+                            {stateLabel(transition.from)}
+                          </span>
+                          <span className="text-xs text-slate-600">-&gt;</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${stateTone(transition.to)}`}>
+                            {stateLabel(transition.to)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="text-right text-xs text-slate-500">
+                        <p>{formatTime(transition.at)}</p>
+                        <p className="mt-1 font-mono text-slate-600">{job.jobId.slice(0, 8)}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 rounded-2xl border border-dashed border-white/10 bg-slate-950/50 px-4 py-6 text-sm text-slate-500">
+                State transitions will appear here as soon as jobs move through the pipeline.
+              </p>
+            )}
+          </article>
+        </section>
+
         {/* Pipeline + Findings grid */}
         <section className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
 
@@ -1032,6 +1249,7 @@ export default function Home() {
                         )}
                       </div>
                       <h3 className="text-lg font-semibold text-white truncate">{job.target.displayName}</h3>
+                      <p className="text-sm leading-6 text-slate-400">{operatorStateCopy(job.state)}</p>
                       <LifecycleBar job={job} />
                     </div>
 
@@ -1129,6 +1347,13 @@ export default function Home() {
               </p>
             </div>
 
+            <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-900/50 px-4 py-3 text-xs uppercase tracking-[0.25em] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {publishedJobs.length} published | {needsHumanReviewJobs.length} awaiting analyst review | {discardedJobs.length} discarded
+              </span>
+              <span className="text-slate-600">Open any card for proof, artifacts, PoC, and timeline</span>
+            </div>
+
             {publishedJobs.length > 0 ? (
               publishedJobs.slice(0, 8).map((job) => (
                 <article
@@ -1167,6 +1392,11 @@ export default function Home() {
                   {job.report?.evidence && (
                     <p className="mt-3 text-xs uppercase tracking-[0.2em] text-cyan-300">
                       {job.report.evidence.summary}
+                    </p>
+                  )}
+                  {countArtifactEvidence(job.report) && (
+                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+                      {countArtifactEvidence(job.report)}
                     </p>
                   )}
                   <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
@@ -1233,6 +1463,11 @@ export default function Home() {
                     <h3 className="mt-4 text-lg font-semibold text-white">
                       {job.report?.title ?? "Candidate finding"}
                     </h3>
+                    {countArtifactEvidence(job.report) && (
+                      <p className="mt-3 text-xs uppercase tracking-[0.2em] text-amber-300">
+                        {countArtifactEvidence(job.report)}
+                      </p>
+                    )}
                     <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
                       {job.verdict?.rationale ?? job.report?.description ?? ""}
                     </p>
@@ -1264,6 +1499,11 @@ export default function Home() {
                         {job.report?.evidence && (
                           <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">
                             {proofLabel(job.report.evidence.proofLevel)} evidence
+                          </p>
+                        )}
+                        {countArtifactEvidence(job.report) && (
+                          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-600">
+                            {countArtifactEvidence(job.report)}
                           </p>
                         )}
                         <p className="mt-1 text-xs text-slate-500">

@@ -505,25 +505,30 @@ Done when:
 
 - âœ… High-impact findings feel filtered, not rubber-stamped
 
-### 9. Upgrade the UI into an operator console
+### 9. Upgrade the UI into an operator console — ✅ COMPLETED
 
 Goal:
 
 Make the UI useful for real operation, not just demonstration.
 
-What to do:
+Implementation summary:
 
-- show queue states
-- show approval status
-- show scan/review status
-- show finding confidence and severity
-- provide report detail views
-- expose artifacts and PoCs
-- handle uncertain findings distinctly
+- Updated `ui/src/app/page.tsx` so the operator console now includes an explicit operations snapshot above the main pipeline:
+  - queue overview cards for `pending_approval`, `approved`, `scanning/reviewing`, and `needs_human_review`
+  - manual `Sync State` control plus visible last-sync timestamp
+  - recent activity panel that shows the latest job state transitions without requiring backend log access
+- Strengthened pipeline readability inside the main queue view:
+  - each job card now includes operator-facing state copy explaining what is happening and what action is needed
+  - jobs are sorted by most recent updates so the console surfaces active work first
+- Strengthened the findings surface so evidence density is visible at a glance:
+  - findings summary band now distinguishes published, analyst-review, and discarded outcomes
+  - published, needs-human-review, and discarded cards now expose trace/artifact/replay-step counts directly in the list view
+  - modal detail view remains the deep drill-down surface for proof, PoC, artifacts, reproduction guidance, and full state history
+- Verification: `bunx tsc -p tsconfig.json` and `bun run build:ui` both pass cleanly
 
 Done when:
 
-- A user can understand the full pipeline state from the UI alone
+- ✅ A user can understand the full pipeline state from the UI alone
 
 ### 10. Finish Telegram MVP commands and alerts
 
@@ -607,13 +612,13 @@ If continuing in a new thread, start here:
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
 3. Verify the current stack in `C:\VigilanceOS`
-4. Implement ranked build order item 9: upgrade the UI into an operator console
+4. Implement ranked build order item 10: finish Telegram MVP commands and alerts
 
 That work should include:
 
-- surfacing the full queue and approval state clearly
-- improving scan/review visibility and report detail usability
-- exposing artifacts and uncertain findings more explicitly
-- making the UI sufficient for understanding pipeline state without any backend log reading
+- delivering alerting for newly discovered Scout targets and finished audits
+- supporting `/approve`, `/report <audit>`, and `/findings`
+- adding `/status <audit>` if it comes together cleanly
+- making Telegram good enough to monitor and approve work away from the UI
 
 After that, move directly into Telegram MVP completion and Scout scheduling work.
