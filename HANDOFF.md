@@ -89,6 +89,8 @@ The following important local/source changes were reconciled:
   - `coral-xyz/sealevel-attacks`
 - The first real audit attempt reached the expected model-readiness gate and failed honestly because the configured Nosana endpoint returned `503 Service Unavailable`
 - Legacy Eliza memory persistence can still fail in this environment, but those writes are now non-fatal and no longer break canonical job creation
+- The deep-auditor pivot now includes repo indexing, security-neighborhood retrieval, and ranked multi-candidate audit output stored on `report.candidateFindings`
+- Live GitHub ingestion validation now succeeds against both primary demo repos through the real ingestion pipeline, including clean clone / cleanup behavior outside sandbox constraints
 
 ### Important note about earlier failures
 
@@ -659,14 +661,13 @@ If continuing in a new thread, start here:
 3. Read `DEEP_AUDITOR_PIVOT.md`
 4. Read `DEEP_AUDITOR_CHECKLIST.md`
 5. Verify the current stack in `C:\VigilanceOS`
-6. Start the audit-engine pivot from checklist item 1
+6. Start the audit-engine pivot from the first incomplete checklist item
 
 That work should prioritize:
 
-- fixing repo ingestion reliability
-- building repo indexing and security-neighborhood retrieval
-- replacing the current single-finding audit contract with multi-candidate findings
 - tightening evidence honesty before further demo claims
+- adding exploratory discovery beyond analyzer-seeded neighborhoods
+- increasing reviewer independence now that multi-finding output is preserved
 
 After the pivot reaches a believable multi-finding state, move into:
 

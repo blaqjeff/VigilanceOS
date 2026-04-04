@@ -68,6 +68,24 @@ export type AuditReport = {
     framework: PocFramework;
     text: string;
   };
+  candidateFindings?: AuditFindingCandidate[];
+};
+
+export type AuditFindingCandidate = {
+  candidateId: string;
+  title: string;
+  severity: FindingSeverity;
+  confidence: number;
+  description: string;
+  impact: string;
+  whyFlagged: string[];
+  affectedSurface?: string[];
+  recommendations?: string[];
+  evidence: EvidenceBundle;
+  poc?: {
+    framework: PocFramework;
+    text: string;
+  };
 };
 
 export type ReviewerVerdict = {
@@ -169,6 +187,17 @@ export type RepoIndex = {
   summary: string;
 };
 
+export type RepoNeighborhood = {
+  id: string;
+  label: string;
+  root: string;
+  reason: string;
+  seedFiles: string[];
+  files: string[];
+  hotspots: RepoHotspot[];
+  summary: string;
+};
+
 export type MaterializationAttempt = {
   strategy: string;
   ok: boolean;
@@ -204,6 +233,8 @@ export type IngestionResult = {
   categories: TargetCategory[];
   /** Repo-wide index used by later retrieval passes */
   repoIndex: RepoIndex;
+  /** Focused audit neighborhoods derived from repo-wide awareness */
+  neighborhoods: RepoNeighborhood[];
   /** Relevant source files extracted for auditing */
   sourceFiles: SourceFile[];
   /** Total number of source files found */

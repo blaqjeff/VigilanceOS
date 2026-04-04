@@ -1,6 +1,7 @@
 import type { IAgentRuntime } from "@elizaos/core";
 import { logger, ModelType } from "@elizaos/core";
 import type {
+  AuditFindingCandidate,
   AuditReport,
   EvidenceArtifact,
   EvidenceBundle,
@@ -78,6 +79,14 @@ function buildCodeContext(ingestion: IngestionResult): string {
 
   sections.push(ingestion.repoIndex.summary);
   sections.push("");
+
+  if (ingestion.neighborhoods.length > 0) {
+    sections.push(`=== SECURITY NEIGHBORHOODS (${ingestion.neighborhoods.length}) ===`);
+    for (const neighborhood of ingestion.neighborhoods) {
+      sections.push(neighborhood.summary);
+      sections.push("");
+    }
+  }
 
   // Source files
   sections.push(`=== SOURCE FILES (${ingestion.sourceFiles.length} of ${ingestion.totalFilesFound} total) ===`);
@@ -560,6 +569,334 @@ function buildBaseDescription(topSignal?: AnalyzerSignal): string {
   ].join(" ");
 }
 
+const MAX_CANDIDATE_FINDINGS = 5;
+
+function selectCandidateSeeds(signals: AnalyzerSignal[]): AnalyzerSignal[] {
+  const seeds: AnalyzerSignal[] = [];
+  const seen = new Set<string>();
+
+  for (const signal of signals) {
+    const key = `${signal.file}:${signal.line}:${signal.vulnClass}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    seeds.push(signal);
+    if (seeds.length >= MAX_CANDIDATE_FINDINGS) break;
+  }
+
+  return seeds;
+}
+
+function relatedSignalsForSeed(seed: AnalyzerSignal, signals: AnalyzerSignal[]): AnalyzerSignal[] {
+  const sameFileAndClass = signals.filter(
+    (signal) => signal.file === seed.file && signal.vulnClass === seed.vulnClass
+  );
+  if (sameFileAndClass.length > 0) return sameFileAndClass.slice(0, 6);
+
+  const sameClass = signals.filter((signal) => signal.vulnClass === seed.vulnClass);
+  if (sameClass.length > 0) return sameClass.slice(0, 6);
+
+  return [seed];
+}
+
+function createPocForSeed(
+  seed: AnalyzerSignal,
+  pocFramework: PocFramework,
+  solanaAnalysis?: SolanaAnalysisResult,
+  evmAnalysis?: EvmAnalysisResult
+): AuditReport["poc"] {
+  if (solanaAnalysis) {
+    return {
+      framework: pocFramework,
+      text: generateSolanaPoC(solanaAnalysis, seed.vulnClass as any),
+    };
+  }
+
+  if (evmAnalysis) {
+    return {
+      framework: pocFramework,
+      text: generateEvmPoC(evmAnalysis, seed.vulnClass as any),
+    };
+  }
+
+  return {
+    framework: pocFramework,
+    text: `// PoC skeleton - framework: ${pocFramework}\n// TODO: implement against the target`,
+  };
+}
+
+function buildCandidateFinding(
+  target: Target,
+  reportId: string,
+  seed: AnalyzerSignal,
+  signals: AnalyzerSignal[],
+  poc: AuditReport["poc"]
+): AuditFindingCandidate {
+  const severity = seed.severityHint;
+  const whyFlagged = buildWhyFlagged(signals);
+  const evidence = buildEvidenceBundle(target, severity, poc, signals, whyFlagged);
+
+  return {
+    candidateId: `${reportId}_c_${simpleHash(`${seed.file}:${seed.line}:${seed.vulnClass}`)}`,
+    title: buildBaseTitle(target, seed),
+    severity,
+    confidence: defaultConfidenceForEvidence(evidence),
+    description: buildBaseDescription(seed),
+    impact: buildImpact(seed),
+    whyFlagged,
+    affectedSurface: buildAffectedSurface(signals),
+    recommendations: [
+      "Confirm the issue is in-scope for the program (if applicable).",
+      "Reproduce locally with the attached replay guidance or PoC.",
+      "Add regression tests covering the affected code path.",
+      "Apply the missing guard or invariant validation before publication.",
+    ],
+    evidence,
+    poc,
+  };
+}
+
+function reportFromPrimaryCandidate(
+  reportId: string,
+  targetId: string,
+  primary: AuditFindingCandidate,
+  candidates: AuditFindingCandidate[]
+): AuditReport {
+  return {
+    reportId,
+    targetId,
+    title: primary.title,
+    severity: primary.severity,
+    confidence: primary.confidence,
+    description: primary.description,
+    impact: primary.impact,
+    whyFlagged: primary.whyFlagged,
+    affectedSurface: primary.affectedSurface,
+    recommendations: primary.recommendations,
+    evidence: primary.evidence,
+    poc: primary.poc,
+    candidateFindings: candidates,
+  };
+}
+
+function proofRank(proofLevel: EvidenceBundle["proofLevel"]): number {
+  switch (proofLevel) {
+    case "runnable_poc":
+      return 4;
+    case "guided_replay":
+      return 3;
+    case "code_path":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+function candidateFingerprint(candidate: AuditFindingCandidate): string {
+  const primaryTrace = candidate.evidence.traces[0];
+  const normalizedTitle = candidate.title.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedSurface = (candidate.affectedSurface ?? [])
+    .slice(0, 3)
+    .map((value) => value.trim().toLowerCase())
+    .join("|");
+
+  return [
+    primaryTrace?.vulnerabilityClass ?? "",
+    primaryTrace?.file ?? "",
+    primaryTrace?.line ?? "",
+    normalizedSurface,
+    normalizedTitle,
+  ].join("::");
+}
+
+function rankCandidates(candidates: AuditFindingCandidate[]): AuditFindingCandidate[] {
+  return [...candidates].sort((left, right) => {
+    const severityDelta = severityRank(right.severity) - severityRank(left.severity);
+    if (severityDelta !== 0) return severityDelta;
+
+    const proofDelta =
+      proofRank(right.evidence.proofLevel) - proofRank(left.evidence.proofLevel);
+    if (proofDelta !== 0) return proofDelta;
+
+    const confidenceDelta = right.confidence - left.confidence;
+    if (Math.abs(confidenceDelta) > 0.001) return confidenceDelta;
+
+    const traceDelta = right.evidence.traces.length - left.evidence.traces.length;
+    if (traceDelta !== 0) return traceDelta;
+
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function dedupeRankedCandidates(
+  candidates: AuditFindingCandidate[]
+): AuditFindingCandidate[] {
+  const deduped: AuditFindingCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of rankCandidates(candidates)) {
+    const fingerprint = candidateFingerprint(candidate);
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    deduped.push(candidate);
+    if (deduped.length >= MAX_CANDIDATE_FINDINGS) break;
+  }
+
+  return deduped;
+}
+
+function coerceAnalyzerSignalsFromCandidate(
+  candidate: AuditFindingCandidate
+): AnalyzerSignal[] {
+  if (candidate.evidence.traces.length > 0) {
+    return candidate.evidence.traces.map((trace) => ({
+      vulnClass: trace.vulnerabilityClass,
+      severityHint: trace.severityHint,
+      file: trace.file,
+      line: trace.line,
+      snippet: trace.snippet ?? "",
+      finding: trace.finding,
+      confirmationHint: trace.confirmationHint,
+    }));
+  }
+
+  return [
+    {
+      vulnClass: "candidate_finding",
+      severityHint: candidate.severity,
+      file: candidate.affectedSurface?.[0] ?? "unknown",
+      line: 0,
+      snippet: "",
+      finding: candidate.whyFlagged[0] ?? candidate.description,
+      confirmationHint: candidate.recommendations?.[0] ?? "Validate the affected path directly in code.",
+    },
+  ];
+}
+
+function normalizePoc(
+  value: unknown,
+  fallback: AuditFindingCandidate["poc"],
+  pocFramework: PocFramework
+): AuditFindingCandidate["poc"] {
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const parsed = value as { framework?: unknown; text?: unknown };
+  if (typeof parsed.text !== "string" || !parsed.text.trim()) {
+    return fallback;
+  }
+
+  const framework = ["foundry", "hardhat", "anchor", "generic"].includes(
+    String(parsed.framework)
+  )
+    ? (parsed.framework as PocFramework)
+    : pocFramework;
+
+  return {
+    framework,
+    text: parsed.text,
+  };
+}
+
+function normalizeRecommendations(
+  value: unknown,
+  fallback?: string[]
+): string[] | undefined {
+  const normalized = Array.isArray(value)
+    ? value.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function coerceParsedCandidates(parsed: unknown): Array<Record<string, unknown>> {
+  if (!parsed || typeof parsed !== "object") return [];
+
+  if (Array.isArray((parsed as { candidates?: unknown }).candidates)) {
+    return ((parsed as { candidates: unknown[] }).candidates)
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
+      .slice(0, MAX_CANDIDATE_FINDINGS);
+  }
+
+  const legacy = parsed as Record<string, unknown>;
+  if (
+    typeof legacy.title === "string" ||
+    typeof legacy.description === "string" ||
+    typeof legacy.impact === "string"
+  ) {
+    return [legacy];
+  }
+
+  return [];
+}
+
+function mergeCandidateWithParsedResult(
+  target: Target,
+  baseCandidate: AuditFindingCandidate,
+  parsedCandidate: Record<string, unknown> | undefined,
+  pocFramework: PocFramework
+): AuditFindingCandidate {
+  if (!parsedCandidate) {
+    return baseCandidate;
+  }
+
+  const severity = ["low", "medium", "high", "critical"].includes(
+    String(parsedCandidate.severity)
+  )
+    ? (parsedCandidate.severity as FindingSeverity)
+    : baseCandidate.severity;
+
+  const whyFlagged = uniqueStrings(
+    Array.isArray(parsedCandidate.whyFlagged)
+      ? parsedCandidate.whyFlagged.map((reason) => String(reason))
+      : baseCandidate.whyFlagged
+  );
+  const affectedSurface = uniqueStrings(
+    Array.isArray(parsedCandidate.affectedSurface)
+      ? parsedCandidate.affectedSurface.map((value) => String(value))
+      : baseCandidate.affectedSurface ?? []
+  );
+  const poc = normalizePoc(parsedCandidate.poc, baseCandidate.poc, pocFramework);
+  const evidenceSignals = coerceAnalyzerSignalsFromCandidate(baseCandidate);
+  const evidence = buildEvidenceBundle(
+    target,
+    severity,
+    poc,
+    evidenceSignals,
+    whyFlagged.length > 0 ? whyFlagged : baseCandidate.whyFlagged
+  );
+
+  return {
+    ...baseCandidate,
+    title:
+      typeof parsedCandidate.title === "string" && parsedCandidate.title.trim()
+        ? parsedCandidate.title
+        : baseCandidate.title,
+    severity,
+    confidence: sanitizeConfidence(
+      parsedCandidate.confidence,
+      defaultConfidenceForEvidence(evidence)
+    ),
+    description:
+      typeof parsedCandidate.description === "string" && parsedCandidate.description.trim()
+        ? parsedCandidate.description
+        : baseCandidate.description,
+    impact:
+      typeof parsedCandidate.impact === "string" && parsedCandidate.impact.trim()
+        ? parsedCandidate.impact
+        : baseCandidate.impact,
+    whyFlagged: whyFlagged.length > 0 ? whyFlagged : baseCandidate.whyFlagged,
+    affectedSurface:
+      affectedSurface.length > 0 ? affectedSurface : baseCandidate.affectedSurface,
+    recommendations: normalizeRecommendations(
+      parsedCandidate.recommendations,
+      baseCandidate.recommendations
+    ),
+    evidence,
+    poc,
+  };
+}
+
 function reviewThresholds(severity: FindingSeverity): {
   publish: number;
   humanReview: number;
@@ -680,48 +1017,63 @@ export async function runAudit(
 
   const evidenceSignals = collectEvidenceSignals(solanaAnalysis, evmAnalysis);
   const topSignal = evidenceSignals[0];
+  const candidateSeeds = selectCandidateSeeds(evidenceSignals);
+  let baseCandidates: AuditFindingCandidate[] = [];
 
-  let generatedPoC: string | null = null;
-  if (solanaAnalysis && solanaAnalysis.signals.length > 0) {
-    generatedPoC = generateSolanaPoC(solanaAnalysis);
-  } else if (evmAnalysis && evmAnalysis.signals.length > 0) {
-    generatedPoC = generateEvmPoC(evmAnalysis);
+  if (candidateSeeds.length > 0) {
+    baseCandidates = candidateSeeds.map((seed) =>
+      buildCandidateFinding(
+        target,
+        reportId,
+        seed,
+        relatedSignalsForSeed(seed, evidenceSignals),
+        createPocForSeed(seed, pocFramework, solanaAnalysis, evmAnalysis)
+      )
+    );
   }
 
-  const basePoc: AuditReport["poc"] = {
-    framework: pocFramework,
-    text:
-      generatedPoC ??
-      `// PoC skeleton - framework: ${pocFramework}\n// TODO: implement against the target`,
-  };
-  const baseSeverity = topSignal?.severityHint ?? "medium";
-  const baseWhyFlagged = buildWhyFlagged(evidenceSignals);
-  const baseEvidence = buildEvidenceBundle(
-    target,
-    baseSeverity,
-    basePoc,
-    evidenceSignals,
-    baseWhyFlagged
-  );
-  const base: AuditReport = {
+  if (baseCandidates.length === 0) {
+    const fallbackPoc: AuditReport["poc"] = {
+      framework: pocFramework,
+      text: `// PoC skeleton - framework: ${pocFramework}\n// TODO: implement against the target`,
+    };
+    const fallbackSeverity = topSignal?.severityHint ?? "medium";
+    const fallbackWhyFlagged = buildWhyFlagged(evidenceSignals);
+    const fallbackEvidence = buildEvidenceBundle(
+      target,
+      fallbackSeverity,
+      fallbackPoc,
+      evidenceSignals,
+      fallbackWhyFlagged
+    );
+    baseCandidates = [
+      {
+        candidateId: `${reportId}_c_0`,
+        title: buildBaseTitle(target, topSignal),
+        severity: fallbackSeverity,
+        confidence: defaultConfidenceForEvidence(fallbackEvidence),
+        description: buildBaseDescription(topSignal),
+        impact: buildImpact(topSignal),
+        whyFlagged: fallbackWhyFlagged,
+        affectedSurface: buildAffectedSurface(evidenceSignals),
+        recommendations: [
+          "Confirm the issue is in-scope for the program (if applicable).",
+          "Reproduce locally with the attached replay guidance or PoC.",
+          "Add regression tests covering the affected code path.",
+          "Apply the missing guard or invariant validation before publication.",
+        ],
+        evidence: fallbackEvidence,
+        poc: fallbackPoc,
+      },
+    ];
+  }
+
+  let base = reportFromPrimaryCandidate(
     reportId,
-    targetId: target.targetId,
-    title: buildBaseTitle(target, topSignal),
-    severity: baseSeverity,
-    confidence: defaultConfidenceForEvidence(baseEvidence),
-    description: buildBaseDescription(topSignal),
-    impact: buildImpact(topSignal),
-    whyFlagged: baseWhyFlagged,
-    affectedSurface: buildAffectedSurface(evidenceSignals),
-    recommendations: [
-      "Confirm the issue is in-scope for the program (if applicable).",
-      "Reproduce locally with the attached replay guidance or PoC.",
-      "Add regression tests covering the affected code path.",
-      "Apply the missing guard or invariant validation before publication.",
-    ],
-    evidence: baseEvidence,
-    poc: basePoc,
-  };
+    target.targetId,
+    baseCandidates[0],
+    baseCandidates
+  );
 
   try {
     const specialistPrompt = getSpecialistPrompt(category);
@@ -730,9 +1082,9 @@ export async function runAudit(
     if (analysisContext) {
       promptParts.push(
         "IMPORTANT: The following STATIC ANALYSIS has already been performed on the source code.",
-        "These are GROUNDED evidence signals extracted by pattern analysis. USE THEM as the basis for your finding.",
-        "Pick the MOST EXPLOITABLE signal and develop it into a complete, defensible vulnerability report.",
-        "Do NOT ignore the static analysis to propose a different, ungrounded hypothesis.",
+        "These are GROUNDED evidence signals extracted by pattern analysis. USE THEM as the basis for your candidate findings.",
+        "Preserve multiple plausible findings when the code supports them. Do NOT collapse everything into a single issue if distinct vulnerabilities exist.",
+        "Do NOT ignore the static analysis to propose different, ungrounded hypotheses.",
         "",
         analysisContext,
         ""
@@ -752,7 +1104,8 @@ export async function runAudit(
     }
 
     promptParts.push(
-      "Produce ONE concrete vulnerability finding with:",
+      `Produce up to ${MAX_CANDIDATE_FINDINGS} concrete vulnerability candidates ordered strongest-first.`,
+      "Each candidate must include:",
       "- title: a specific, descriptive title referencing actual files/functions and the vulnerability class",
       "- severity: low | medium | high | critical",
       "- confidence: a number from 0.0 to 1.0 expressing the auditor's confidence",
@@ -774,7 +1127,7 @@ export async function runAudit(
     promptParts.push("", codeContext, "");
     promptParts.push(
       "Return STRICT JSON matching this TypeScript shape:",
-      `{ title: string, severity: 'low'|'medium'|'high'|'critical', confidence: number, description: string, impact: string, whyFlagged: string[], affectedSurface: string[], recommendations: string[], poc: { framework: '${pocFramework}', text: string } }`
+      `{ candidates: Array<{ title: string, severity: 'low'|'medium'|'high'|'critical', confidence: number, description: string, impact: string, whyFlagged: string[], affectedSurface: string[], recommendations: string[], poc: { framework: '${pocFramework}', text: string } }> }`
     );
 
     const prompt = promptParts.filter(Boolean).join("\n");
@@ -793,57 +1146,27 @@ export async function runAudit(
 
     if (jsonStart >= 0 && jsonEnd > jsonStart) {
       const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-      const parsedSeverity = ["low", "medium", "high", "critical"].includes(parsed?.severity)
-        ? (parsed.severity as FindingSeverity)
-        : base.severity;
-      const parsedWhyFlagged = uniqueStrings(
-        Array.isArray(parsed?.whyFlagged)
-          ? parsed.whyFlagged.map((reason: unknown) => String(reason))
-          : base.whyFlagged
-      );
-      const parsedAffectedSurface = uniqueStrings(
-        Array.isArray(parsed?.affectedSurface)
-          ? parsed.affectedSurface.map((value: unknown) => String(value))
-          : base.affectedSurface ?? []
-      );
+      const parsedCandidates = coerceParsedCandidates(parsed);
 
-      let poc = base.poc;
-      if (parsed?.poc && typeof parsed.poc.text === "string") {
-        const parsedFramework = ["foundry", "hardhat", "anchor", "generic"].includes(parsed.poc.framework)
-          ? (parsed.poc.framework as PocFramework)
-          : pocFramework;
-        poc = {
-          framework: parsedFramework,
-          text: parsed.poc.text,
-        };
+      if (parsedCandidates.length > 0) {
+        const mergedCandidates = baseCandidates.map((candidate, index) =>
+          mergeCandidateWithParsedResult(
+            target,
+            candidate,
+            parsedCandidates[index],
+            pocFramework
+          )
+        );
+        const rankedCandidates = dedupeRankedCandidates(mergedCandidates);
+        if (rankedCandidates.length > 0) {
+          return reportFromPrimaryCandidate(
+            reportId,
+            target.targetId,
+            rankedCandidates[0],
+            rankedCandidates
+          );
+        }
       }
-      if (generatedPoC && (!poc?.text || poc.text.trim().length < 50)) {
-        poc = { framework: pocFramework, text: generatedPoC };
-      }
-
-      const evidence = buildEvidenceBundle(
-        target,
-        parsedSeverity,
-        poc,
-        evidenceSignals,
-        parsedWhyFlagged.length > 0 ? parsedWhyFlagged : baseWhyFlagged
-      );
-
-      return {
-        ...base,
-        title: typeof parsed?.title === "string" ? parsed.title : base.title,
-        severity: parsedSeverity,
-        confidence: sanitizeConfidence(parsed?.confidence, defaultConfidenceForEvidence(evidence)),
-        description: typeof parsed?.description === "string" ? parsed.description : base.description,
-        impact: typeof parsed?.impact === "string" ? parsed.impact : base.impact,
-        whyFlagged: parsedWhyFlagged.length > 0 ? parsedWhyFlagged : baseWhyFlagged,
-        affectedSurface: parsedAffectedSurface.length > 0 ? parsedAffectedSurface : base.affectedSurface,
-        recommendations: Array.isArray(parsed?.recommendations)
-          ? parsed.recommendations.map((value: unknown) => String(value)).filter(Boolean)
-          : base.recommendations,
-        evidence,
-        poc,
-      };
     }
   } catch (e) {
     logger.warn(`[Audit] LLM enrichment failed, falling back to base report: ${e}`);

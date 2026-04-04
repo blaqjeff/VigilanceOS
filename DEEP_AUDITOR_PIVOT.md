@@ -48,12 +48,12 @@ Today the audit engine behaves like this:
 ```mermaid
 flowchart TD
     A["Repo or local folder"] --> B["Walk full tree"]
-    B --> C["Select capped file subset"]
+    B --> C["Repo index + security neighborhoods"]
     C --> D["Static analyzers emit signals"]
-    C --> E["Selected code context"]
+    C --> E["Focused neighborhood code context"]
     D --> F["LLM auditor"]
     E --> F
-    F --> G["One report"]
+    F --> G["Ranked candidate findings"]
     G --> H["Reviewer + policy gate"]
     H --> I["Published / needs_human_review / discarded"]
 ```
@@ -61,11 +61,11 @@ flowchart TD
 ### What this means in practice
 
 - The system does inspect the real repo.
-- The model does read real code.
-- The model does not reason over the full repo as a connected system.
+- The model does read real code from focused neighborhoods.
+- The model still does not reason over the full repo as a connected system.
 - The analyzers currently decide too much of what the model sees as important.
 - A missed file or missed signal can become a missed finding.
-- The audit prompt is still optimized for one strongest finding instead of a ranked vulnerability set.
+- We now preserve multiple candidate findings, but they are still too analyzer-seeded and not exploratory enough.
 
 ## 3. Why The Current Version Was Built This Way
 
@@ -91,7 +91,7 @@ For the product vision, that tradeoff is no longer good enough.
 
 The current engine should be described honestly as:
 
-"A grounded, category-aware audit pipeline that combines repo ingestion, static-analysis signals, LLM synthesis, and review gating."
+"A grounded, category-aware audit pipeline that combines repo ingestion, repo indexing, security-neighborhood retrieval, static-analysis signals, multi-candidate LLM synthesis, and review gating."
 
 It should not be described as:
 
@@ -266,4 +266,3 @@ The pivot is successful when:
 - evidence labels are honest
 - reviewer filtering meaningfully reduces false positives
 - judges can read the repo and see a real path toward a startup-grade auditing system
-

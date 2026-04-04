@@ -12,10 +12,10 @@ Legend:
 
 ## 1. Repo Ingestion Reliability
 
-- [ ] Make GitHub cloning reliable enough for repeated live tests
-- [ ] Add retry / shallow clone / clearer failure surfaces
-- [ ] Preserve target materialization metadata so failed runs are diagnosable
-- [ ] Keep local-folder ingestion as a first-class path
+- [x] Make GitHub cloning reliable enough for repeated live tests
+- [x] Add retry / shallow clone / clearer failure surfaces
+- [x] Preserve target materialization metadata so failed runs are diagnosable
+- [x] Keep local-folder ingestion as a first-class path
 
 Done when:
 
@@ -23,9 +23,9 @@ Done when:
 
 ## 2. Repo Indexer
 
-- [ ] Build a repo index structure separate from the current flat `sourceFiles` list
-- [ ] Capture important files, modules, imports, contracts, programs, instructions, and configs
-- [ ] Extract security-relevant symbols:
+- [x] Build a repo index structure separate from the current flat `sourceFiles` list
+- [x] Capture important files, modules, imports, contracts, programs, instructions, and configs
+- [x] Extract security-relevant symbols:
   - contracts
   - libraries
   - interfaces
@@ -33,7 +33,7 @@ Done when:
   - PDA helpers
   - auth-like modifiers / constraints
   - external call sites
-- [ ] Store the index on the job so UI and later passes can inspect it
+- [x] Store the index on the job so UI and later passes can inspect it
 
 Done when:
 
@@ -41,10 +41,10 @@ Done when:
 
 ## 3. Security Neighborhood Retrieval
 
-- [ ] Create retrieval rules for Solidity / EVM neighborhoods
-- [ ] Create retrieval rules for Solana / Rust neighborhoods
-- [ ] Expand around hotspots by related imports, helpers, auth code, storage/state, and tests
-- [ ] Replace the current flat "top files only" context with neighborhood bundles
+- [x] Create retrieval rules for Solidity / EVM neighborhoods
+- [x] Create retrieval rules for Solana / Rust neighborhoods
+- [x] Expand around hotspots by related imports, helpers, auth code, storage/state, and tests
+- [x] Replace the current flat "top files only" context with neighborhood bundles
 
 Done when:
 
@@ -52,10 +52,10 @@ Done when:
 
 ## 4. Multi-Finding Audit Output
 
-- [ ] Remove the "ONE concrete vulnerability finding" constraint from the audit flow
-- [ ] Change the audit engine to return multiple candidate findings
-- [ ] Add dedupe and ranking across candidate findings
-- [ ] Preserve weaker but grounded findings for review instead of dropping them silently
+- [x] Remove the "ONE concrete vulnerability finding" constraint from the audit flow
+- [x] Change the audit engine to return multiple candidate findings
+- [x] Add dedupe and ranking across candidate findings
+- [x] Preserve weaker but grounded findings for review instead of dropping them silently
 
 Done when:
 
@@ -150,9 +150,8 @@ This is the recommended implementation order:
 
 Start with:
 
-- repo ingestion reliability
-- repo index design
-- replacing the single-finding audit contract with candidate-finding output
+- make evidence labels honest so preserved candidates are not overstated
+- add exploratory discovery beyond analyzer-seeded neighborhoods
+- begin separating reviewer judgment from auditor framing now that multiple findings are preserved
 
-Those three changes unlock almost everything else.
-
+Those three changes unlock the next credibility jump.

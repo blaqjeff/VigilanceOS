@@ -17,6 +17,7 @@ import type {
   RepoHotspotKind,
   RepoImportEdge,
   RepoIndex,
+  RepoNeighborhood,
   RepoSymbol,
   SourceFile,
   Target,
@@ -799,6 +800,168 @@ function buildRepoIndex(
   };
 }
 
+function neighborhoodRoot(relativePath: string, category: TargetCategory): string {
+  const segments = relativePath.split("/");
+
+  if (category === "solana_rust") {
+    const programsIndex = segments.indexOf("programs");
+    if (programsIndex >= 0 && segments.length > programsIndex + 1) {
+      return segments.slice(0, programsIndex + 2).join("/");
+    }
+    if (segments[0] === "tests" || segments[0] === "test") return segments[0];
+    if (segments[0] === "migrations") return "migrations";
+  }
+
+  if (category === "solidity_evm") {
+    if ((segments[0] === "src" || segments[0] === "contracts") && segments.length >= 2) {
+      return segments[1]?.endsWith(".sol") ? segments[0] : segments.slice(0, 2).join("/");
+    }
+    if ((segments[0] === "test" || segments[0] === "tests") && segments.length >= 2) {
+      return segments.slice(0, 2).join("/");
+    }
+  }
+
+  if (segments.length >= 2) return segments.slice(0, 2).join("/");
+  return segments[0] ?? relativePath;
+}
+
+function resolveLocalImport(from: string, target: string): string | null {
+  const cleaned = target.trim();
+  if (!cleaned.startsWith(".")) return null;
+
+  const fromDir = path.posix.dirname(from);
+  let resolved = path.posix.normalize(path.posix.join(fromDir, cleaned));
+
+  if (!path.posix.extname(resolved)) {
+    const candidates = [
+      `${resolved}.sol`,
+      `${resolved}.rs`,
+      `${resolved}.ts`,
+      `${resolved}.tsx`,
+      `${resolved}.js`,
+      `${resolved}.jsx`,
+      `${resolved}/index.ts`,
+      `${resolved}/index.js`,
+      `${resolved}/lib.rs`,
+    ];
+    return candidates[0] ?? null;
+  }
+
+  return resolved;
+}
+
+function buildNeighborhoods(
+  files: { relativePath: string; absolutePath: string }[],
+  repoIndex: RepoIndex,
+  category: TargetCategory
+): RepoNeighborhood[] {
+  const allByPath = new Map(files.map((file) => [file.relativePath, file]));
+  const groupedByRoot = new Map<string, Set<string>>();
+  for (const file of files) {
+    const root = neighborhoodRoot(file.relativePath, category);
+    if (!groupedByRoot.has(root)) groupedByRoot.set(root, new Set());
+    groupedByRoot.get(root)!.add(file.relativePath);
+  }
+
+  const seedRoots = new Map<string, { reason: string; priority: number; hotspots: RepoHotspot[] }>();
+
+  for (const hotspot of repoIndex.hotspots.slice(0, 24)) {
+    const root = neighborhoodRoot(hotspot.file, category);
+    const current = seedRoots.get(root);
+    if (!current || hotspot.priority > current.priority) {
+      seedRoots.set(root, {
+        reason: hotspot.reason,
+        priority: hotspot.priority,
+        hotspots: [hotspot],
+      });
+    } else {
+      current.hotspots.push(hotspot);
+    }
+  }
+
+  for (const entryFile of repoIndex.entryFiles.slice(0, 18)) {
+    const root = neighborhoodRoot(entryFile, category);
+    if (!seedRoots.has(root)) {
+      seedRoots.set(root, {
+        reason: "Primary entry file or config path.",
+        priority: 60,
+        hotspots: [],
+      });
+    }
+  }
+
+  const testSet = new Set(repoIndex.testFiles);
+  const neighborhoods: RepoNeighborhood[] = [];
+
+  for (const [root, seed] of Array.from(seedRoots.entries()).sort((left, right) => right[1].priority - left[1].priority)) {
+    const filesInRoot = new Set(groupedByRoot.get(root) ?? []);
+    const seedFiles = new Set<string>();
+
+    for (const hotspot of seed.hotspots.slice(0, 8)) {
+      seedFiles.add(hotspot.file);
+      filesInRoot.add(hotspot.file);
+    }
+
+    for (const entryFile of repoIndex.entryFiles) {
+      if (neighborhoodRoot(entryFile, category) === root) {
+        seedFiles.add(entryFile);
+        filesInRoot.add(entryFile);
+      }
+    }
+
+    const currentFiles = Array.from(filesInRoot);
+    for (const currentFile of currentFiles) {
+      const importEdges = repoIndex.imports.filter((edge) => edge.from === currentFile);
+      for (const edge of importEdges) {
+        const resolved = resolveLocalImport(edge.from, edge.target);
+        if (resolved && allByPath.has(resolved)) {
+          filesInRoot.add(resolved);
+        }
+      }
+    }
+
+    const rootToken = path.posix.basename(root).toLowerCase();
+    for (const testFile of testSet) {
+      const testBase = path.posix.basename(testFile).toLowerCase();
+      if (rootToken && (testBase.includes(rootToken) || testFile.toLowerCase().includes(rootToken))) {
+        filesInRoot.add(testFile);
+      }
+    }
+
+    const orderedFiles = Array.from(filesInRoot)
+      .filter((file) => allByPath.has(file))
+      .sort((left, right) => {
+        const priorityDelta = filePriority(right) - filePriority(left);
+        if (priorityDelta !== 0) return priorityDelta;
+        return left.localeCompare(right);
+      })
+      .slice(0, 14);
+
+    const hotspotSummary = seed.hotspots
+      .slice(0, 4)
+      .map((hotspot) => `${hotspot.kind}:${hotspot.file}:${hotspot.line}`)
+      .join(", ");
+
+    neighborhoods.push({
+      id: `nh_${root.replace(/[^a-zA-Z0-9]+/g, "_")}`,
+      label: root,
+      root,
+      reason: seed.reason,
+      seedFiles: Array.from(seedFiles).sort(),
+      files: orderedFiles,
+      hotspots: seed.hotspots.slice(0, 8),
+      summary: [
+        `Neighborhood: ${root}`,
+        `Reason: ${seed.reason}`,
+        `Files: ${orderedFiles.join(", ") || "none"}`,
+        hotspotSummary ? `Hotspots: ${hotspotSummary}` : "Hotspots: none",
+      ].join("\n"),
+    });
+  }
+
+  return neighborhoods.slice(0, 10);
+}
+
 // ---------------------------------------------------------------------------
 // GitHub cloning
 // ---------------------------------------------------------------------------
@@ -997,14 +1160,41 @@ export async function ingestTarget(target: Target): Promise<IngestionResult> {
   // Classify
   const { primary: category, all: categories } = classifyCategory(allFiles);
   const repoIndex = buildRepoIndex(allFiles, category);
+  const neighborhoods = buildNeighborhoods(allFiles, repoIndex, category);
 
-  // Sort by priority and select top files
   const sorted = allFiles
     .map((f) => ({ ...f, priority: filePriority(f.relativePath) }))
     .sort((a, b) => b.priority - a.priority);
 
-  const selected = sorted.slice(0, MAX_FILES_FOR_AUDIT);
-  const skippedFiles = sorted.slice(MAX_FILES_FOR_AUDIT).map((f) => f.relativePath);
+  const selectedPaths: string[] = [];
+  const selectedSet = new Set<string>();
+
+  for (const neighborhood of neighborhoods) {
+    for (const file of neighborhood.files) {
+      if (selectedPaths.length >= MAX_FILES_FOR_AUDIT) break;
+      if (!selectedSet.has(file)) {
+        selectedSet.add(file);
+        selectedPaths.push(file);
+      }
+    }
+    if (selectedPaths.length >= MAX_FILES_FOR_AUDIT) break;
+  }
+
+  for (const file of sorted) {
+    if (selectedPaths.length >= MAX_FILES_FOR_AUDIT) break;
+    if (!selectedSet.has(file.relativePath)) {
+      selectedSet.add(file.relativePath);
+      selectedPaths.push(file.relativePath);
+    }
+  }
+
+  const selected = selectedPaths
+    .map((relativePath) => allFiles.find((file) => file.relativePath === relativePath))
+    .filter((file): file is { relativePath: string; absolutePath: string } => Boolean(file));
+
+  const skippedFiles = sorted
+    .map((file) => file.relativePath)
+    .filter((relativePath) => !selectedSet.has(relativePath));
 
   // Read file contents
   let totalBytes = 0;
@@ -1052,7 +1242,7 @@ export async function ingestTarget(target: Target): Promise<IngestionResult> {
   logger.info(
     `[Ingestion] Ingested ${sourceFiles.length}/${allFiles.length} files ` +
       `(${Math.round(totalBytes / 1024)}KB) from ${target.displayName} - ` +
-      `category: ${category}, repo index: ${repoIndex.indexedFiles} files / ${repoIndex.hotspots.length} hotspots`
+      `category: ${category}, repo index: ${repoIndex.indexedFiles} files / ${repoIndex.hotspots.length} hotspots / ${neighborhoods.length} neighborhoods`
   );
 
   return {
@@ -1062,6 +1252,7 @@ export async function ingestTarget(target: Target): Promise<IngestionResult> {
     category,
     categories,
     repoIndex,
+    neighborhoods,
     sourceFiles,
     totalFilesFound: allFiles.length,
     structureSummary,
