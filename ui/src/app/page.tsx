@@ -43,7 +43,7 @@ type EvidenceTrace = {
 };
 
 type EvidenceArtifact = {
-  type: "static_analysis" | "poc";
+  type: "static_analysis" | "exploration" | "poc";
   label: string;
   description: string;
   location?: string;

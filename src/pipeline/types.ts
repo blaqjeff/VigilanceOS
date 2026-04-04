@@ -32,11 +32,13 @@ export type EvidenceTrace = {
 };
 
 export type EvidenceArtifact = {
-  type: "static_analysis" | "poc";
+  type: "static_analysis" | "exploration" | "poc";
   label: string;
   description: string;
   location?: string;
 };
+
+export type FindingOrigin = "analyzer" | "exploration" | "analyzer+exploration";
 
 export type ReproductionGuide = {
   available: boolean;
@@ -75,12 +77,15 @@ export type AuditReport = {
 
 export type AuditFindingCandidate = {
   candidateId: string;
+  origin: FindingOrigin;
   title: string;
   severity: FindingSeverity;
   confidence: number;
   description: string;
   impact: string;
   whyFlagged: string[];
+  originNotes?: string[];
+  neighborhoodIds?: string[];
   affectedSurface?: string[];
   recommendations?: string[];
   evidence: EvidenceBundle;

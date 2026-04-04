@@ -6,6 +6,7 @@ import type {
   EvidenceArtifact,
   EvidenceBundle,
   EvidenceTrace,
+  FindingOrigin,
   FindingSeverity,
   IngestionResult,
   PocFramework,
@@ -298,6 +299,15 @@ type AnalyzerSignal = {
   snippet: string;
   finding: string;
   confirmationHint: string;
+};
+
+type ExploratoryLead = {
+  neighborhoodId: string;
+  label: string;
+  severityHint: FindingSeverity;
+  vulnerabilityClass: string;
+  rationale: string;
+  affectedFiles: string[];
 };
 
 const VULNERABILITY_LABELS: Record<string, string> = {
@@ -636,6 +646,7 @@ function buildBaseDescription(topSignal?: AnalyzerSignal): string {
 }
 
 const MAX_CANDIDATE_FINDINGS = 5;
+const MAX_EXPLORATORY_LEADS = 3;
 
 function selectCandidateSeeds(signals: AnalyzerSignal[]): AnalyzerSignal[] {
   const seeds: AnalyzerSignal[] = [];
@@ -650,6 +661,54 @@ function selectCandidateSeeds(signals: AnalyzerSignal[]): AnalyzerSignal[] {
   }
 
   return seeds;
+}
+
+function exploratorySeverityFromPriority(priority: number): FindingSeverity {
+  if (priority >= 94) return "high";
+  if (priority >= 84) return "medium";
+  return "low";
+}
+
+function exploratoryVulnerabilityClassForNeighborhood(
+  category: TargetCategory,
+  neighborhood: IngestionResult["neighborhoods"][number]
+): string {
+  const topHotspot = neighborhood.hotspots[0];
+  switch (topHotspot?.kind) {
+    case "oracle":
+      return category === "solidity_evm" ? "oracle_price" : "oracle_accounting";
+    case "auth":
+      return category === "solidity_evm" ? "access_control" : "signer_authority";
+    case "cpi":
+      return "cpi_escalation";
+    case "pda":
+      return "pda_misuse";
+    case "account_validation":
+      return category === "solidity_evm" ? "access_control" : "ownership_validation";
+    case "upgradeability":
+      return "upgradeability";
+    case "external_call":
+      return category === "solidity_evm" ? "unsafe_external" : "cpi_escalation";
+    case "value_flow":
+      return category === "solidity_evm" ? "accounting_invariant" : "oracle_accounting";
+    default:
+      return category === "solidity_evm" ? "accounting_invariant" : "signer_authority";
+  }
+}
+
+function findNeighborhoodIdsForFiles(
+  ingestion: IngestionResult | undefined,
+  files: string[]
+): string[] {
+  if (!ingestion || files.length === 0) return [];
+
+  const fileSet = new Set(files.filter(Boolean));
+  return ingestion.neighborhoods
+    .filter((neighborhood) =>
+      neighborhood.files.some((file) => fileSet.has(file)) ||
+      neighborhood.seedFiles.some((file) => fileSet.has(file))
+    )
+    .map((neighborhood) => neighborhood.id);
 }
 
 function relatedSignalsForSeed(seed: AnalyzerSignal, signals: AnalyzerSignal[]): AnalyzerSignal[] {
@@ -690,25 +749,217 @@ function createPocForSeed(
   };
 }
 
+async function runExploratoryNeighborhoodPass(
+  runtime: IAgentRuntime,
+  target: Target,
+  category: TargetCategory,
+  ingestion?: IngestionResult
+): Promise<ExploratoryLead[]> {
+  if (!ingestion || ingestion.neighborhoods.length === 0) {
+    return [];
+  }
+
+  const neighborhoodSummaries = ingestion.neighborhoods
+    .slice(0, 12)
+    .map((neighborhood) =>
+      [
+        `NeighborhoodId: ${neighborhood.id}`,
+        `Label: ${neighborhood.label}`,
+        `Root: ${neighborhood.root}`,
+        `Reason: ${neighborhood.reason}`,
+        `Seed files: ${neighborhood.seedFiles.slice(0, 4).join(", ") || "none"}`,
+        `Files: ${neighborhood.files.slice(0, 6).join(", ") || "none"}`,
+        neighborhood.hotspots.length > 0
+          ? `Hotspots: ${neighborhood.hotspots
+              .slice(0, 4)
+              .map(
+                (hotspot) =>
+                  `${hotspot.kind} ${hotspot.file}:${hotspot.line} (${hotspot.reason})`
+              )
+              .join(" | ")}`
+          : "Hotspots: none",
+      ].join("\n")
+    )
+    .join("\n\n");
+
+  const prompt = [
+    "You are a security reconnaissance planner for blockchain code audits.",
+    "Your job is NOT to write final findings yet.",
+    "Based only on the repo index and neighborhood summaries, nominate suspicious neighborhoods that deserve deeper auditing even if deterministic analyzers were silent.",
+    "Prefer neighborhoods involving auth boundaries, value flow, oracles, upgradeability, external calls, CPI, PDA handling, or account validation.",
+    `Return up to ${MAX_EXPLORATORY_LEADS} exploratory leads.`,
+    "",
+    `Target: ${JSON.stringify({ targetId: target.targetId, displayName: target.displayName, type: target.type })}`,
+    `Category: ${category}`,
+    "",
+    ingestion.repoIndex.summary,
+    "",
+    "=== CANDIDATE NEIGHBORHOODS ===",
+    neighborhoodSummaries,
+    "",
+    "Return STRICT JSON:",
+    `{ leads: Array<{ neighborhoodId: string, label: string, severityHint: 'low'|'medium'|'high'|'critical', vulnerabilityClass: string, rationale: string, affectedFiles: string[] }> }`,
+  ].join("\n");
+
+  try {
+    const result = await (runtime as any).useModel?.(ModelType.TEXT_LARGE, {
+      prompt,
+      maxTokens: 900,
+    });
+    const text = typeof result === "string" ? result : result?.text ?? "";
+    const jsonStart = text.indexOf("{");
+    const jsonEnd = text.lastIndexOf("}");
+    if (jsonStart < 0 || jsonEnd <= jsonStart) {
+      return [];
+    }
+
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as {
+      leads?: Array<Record<string, unknown>>;
+    };
+
+    if (!Array.isArray(parsed.leads)) {
+      return [];
+    }
+
+    const neighborhoodMap = new Map(
+      ingestion.neighborhoods.map((neighborhood) => [neighborhood.id, neighborhood] as const)
+    );
+
+    const leads: ExploratoryLead[] = [];
+    for (const rawLead of parsed.leads.slice(0, MAX_EXPLORATORY_LEADS)) {
+      const neighborhoodId = typeof rawLead.neighborhoodId === "string" ? rawLead.neighborhoodId : "";
+      const neighborhood = neighborhoodMap.get(neighborhoodId);
+      if (!neighborhood) continue;
+
+      const severityHint = ["low", "medium", "high", "critical"].includes(
+        String(rawLead.severityHint)
+      )
+        ? (rawLead.severityHint as FindingSeverity)
+        : exploratorySeverityFromPriority(neighborhood.hotspots[0]?.priority ?? 80);
+      const vulnerabilityClass =
+        typeof rawLead.vulnerabilityClass === "string" && rawLead.vulnerabilityClass.trim()
+          ? rawLead.vulnerabilityClass.trim()
+          : exploratoryVulnerabilityClassForNeighborhood(category, neighborhood);
+      const affectedFiles = uniqueStrings(
+        Array.isArray(rawLead.affectedFiles)
+          ? rawLead.affectedFiles.map((value) => String(value))
+          : neighborhood.files.slice(0, 4)
+      );
+
+      leads.push({
+        neighborhoodId,
+        label:
+          typeof rawLead.label === "string" && rawLead.label.trim()
+            ? rawLead.label.trim()
+            : neighborhood.label,
+        severityHint,
+        vulnerabilityClass,
+        rationale:
+          typeof rawLead.rationale === "string" && rawLead.rationale.trim()
+            ? rawLead.rationale.trim()
+            : neighborhood.reason,
+        affectedFiles: affectedFiles.length > 0 ? affectedFiles : neighborhood.files.slice(0, 4),
+      });
+    }
+
+    return leads;
+  } catch (error) {
+    logger.warn(`[Audit] Exploratory neighborhood pass failed: ${error}`);
+    return [];
+  }
+}
+
+function exploratorySignalFromLead(
+  category: TargetCategory,
+  ingestion: IngestionResult,
+  lead: ExploratoryLead
+): AnalyzerSignal {
+  const neighborhood = ingestion.neighborhoods.find(
+    (candidate) => candidate.id === lead.neighborhoodId
+  );
+  const topHotspot = neighborhood?.hotspots[0];
+  const file = topHotspot?.file ?? lead.affectedFiles[0] ?? neighborhood?.root ?? "unknown";
+  const line = topHotspot?.line ?? 1;
+  const vulnerabilityClass =
+    lead.vulnerabilityClass || exploratoryVulnerabilityClassForNeighborhood(category, neighborhood!);
+
+  return {
+    vulnClass: vulnerabilityClass,
+    severityHint: lead.severityHint,
+    file,
+    line,
+    snippet: "",
+    finding: lead.rationale,
+    confirmationHint: `Inspect neighborhood ${lead.label} (${lead.neighborhoodId}) and confirm whether the suspicious subsystem forms a reachable exploit path.`,
+  };
+}
+
+function mergeFindingOrigin(
+  left: FindingOrigin,
+  right: FindingOrigin
+): FindingOrigin {
+  if (left === right) return left;
+  if (left === "analyzer+exploration" || right === "analyzer+exploration") {
+    return "analyzer+exploration";
+  }
+  return "analyzer+exploration";
+}
+
+function uniqueArtifacts(artifacts: EvidenceArtifact[]): EvidenceArtifact[] {
+  const seen = new Set<string>();
+  const merged: EvidenceArtifact[] = [];
+  for (const artifact of artifacts) {
+    const key = `${artifact.type}:${artifact.label}:${artifact.location ?? ""}:${artifact.description}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(artifact);
+  }
+  return merged;
+}
+
+function uniqueTraces(traces: EvidenceTrace[]): EvidenceTrace[] {
+  const seen = new Set<string>();
+  const merged: EvidenceTrace[] = [];
+  for (const trace of traces) {
+    const key = `${trace.vulnerabilityClass}:${trace.file}:${trace.line}:${trace.finding}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(trace);
+  }
+  return merged;
+}
+
 function buildCandidateFinding(
   target: Target,
   reportId: string,
   seed: AnalyzerSignal,
   signals: AnalyzerSignal[],
-  poc: AuditReport["poc"]
+  poc: AuditReport["poc"],
+  options?: {
+    origin?: FindingOrigin;
+    originNotes?: string[];
+    neighborhoodIds?: string[];
+    extraArtifacts?: EvidenceArtifact[];
+  }
 ): AuditFindingCandidate {
   const severity = seed.severityHint;
   const whyFlagged = buildWhyFlagged(signals);
   const evidence = buildEvidenceBundle(target, severity, poc, signals, whyFlagged);
+  if (options?.extraArtifacts?.length) {
+    evidence.artifacts = uniqueArtifacts([...evidence.artifacts, ...options.extraArtifacts]);
+  }
 
   return {
     candidateId: `${reportId}_c_${simpleHash(`${seed.file}:${seed.line}:${seed.vulnClass}`)}`,
+    origin: options?.origin ?? "analyzer",
     title: buildBaseTitle(target, seed),
     severity,
     confidence: defaultConfidenceForEvidence(evidence),
     description: buildBaseDescription(seed),
     impact: buildImpact(seed),
     whyFlagged,
+    originNotes: options?.originNotes,
+    neighborhoodIds: options?.neighborhoodIds,
     affectedSurface: buildAffectedSurface(signals),
     recommendations: [
       "Confirm the issue is in-scope for the program (if applicable).",
@@ -718,6 +969,55 @@ function buildCandidateFinding(
     ],
     evidence,
     poc,
+  };
+}
+
+function mergeDuplicateCandidates(
+  preferred: AuditFindingCandidate,
+  duplicate: AuditFindingCandidate
+): AuditFindingCandidate {
+  const mergedOriginNotes = uniqueStrings([
+    ...(preferred.originNotes ?? []),
+    ...(duplicate.originNotes ?? []),
+  ]);
+  const mergedNeighborhoodIds = uniqueStrings([
+    ...(preferred.neighborhoodIds ?? []),
+    ...(duplicate.neighborhoodIds ?? []),
+  ]);
+  const mergedWhyFlagged = uniqueStrings([
+    ...preferred.whyFlagged,
+    ...duplicate.whyFlagged,
+  ]);
+  const mergedAffectedSurface = uniqueStrings([
+    ...(preferred.affectedSurface ?? []),
+    ...(duplicate.affectedSurface ?? []),
+  ]);
+  const mergedRecommendations = uniqueStrings([
+    ...(preferred.recommendations ?? []),
+    ...(duplicate.recommendations ?? []),
+  ]);
+  const mergedArtifacts = uniqueArtifacts([
+    ...preferred.evidence.artifacts,
+    ...duplicate.evidence.artifacts,
+  ]);
+  const mergedTraces = uniqueTraces([
+    ...preferred.evidence.traces,
+    ...duplicate.evidence.traces,
+  ]);
+
+  return {
+    ...preferred,
+    origin: mergeFindingOrigin(preferred.origin, duplicate.origin),
+    originNotes: mergedOriginNotes.length > 0 ? mergedOriginNotes : undefined,
+    neighborhoodIds: mergedNeighborhoodIds.length > 0 ? mergedNeighborhoodIds : undefined,
+    whyFlagged: mergedWhyFlagged,
+    affectedSurface: mergedAffectedSurface.length > 0 ? mergedAffectedSurface : undefined,
+    recommendations: mergedRecommendations.length > 0 ? mergedRecommendations : undefined,
+    evidence: {
+      ...preferred.evidence,
+      artifacts: mergedArtifacts,
+      traces: mergedTraces,
+    },
   };
 }
 
@@ -778,6 +1078,38 @@ function candidateFingerprint(candidate: AuditFindingCandidate): string {
   ].join("::");
 }
 
+function candidatesShareNeighborhood(
+  left: AuditFindingCandidate,
+  right: AuditFindingCandidate
+): boolean {
+  const leftIds = new Set(left.neighborhoodIds ?? []);
+  return (right.neighborhoodIds ?? []).some((id) => leftIds.has(id));
+}
+
+function primaryVulnerabilityClass(
+  candidate: AuditFindingCandidate
+): string | undefined {
+  return candidate.evidence.traces[0]?.vulnerabilityClass;
+}
+
+function candidatesShouldMerge(
+  left: AuditFindingCandidate,
+  right: AuditFindingCandidate
+): boolean {
+  if (candidateFingerprint(left) === candidateFingerprint(right)) {
+    return true;
+  }
+
+  const leftClass = primaryVulnerabilityClass(left);
+  const rightClass = primaryVulnerabilityClass(right);
+  return Boolean(
+    leftClass &&
+      rightClass &&
+      leftClass === rightClass &&
+      candidatesShareNeighborhood(left, right)
+  );
+}
+
 function rankCandidates(candidates: AuditFindingCandidate[]): AuditFindingCandidate[] {
   return [...candidates].sort((left, right) => {
     const severityDelta = severityRank(right.severity) - severityRank(left.severity);
@@ -798,17 +1130,25 @@ function rankCandidates(candidates: AuditFindingCandidate[]): AuditFindingCandid
 }
 
 function dedupeRankedCandidates(
-  candidates: AuditFindingCandidate[]
+  candidates: AuditFindingCandidate[],
+  limit = MAX_CANDIDATE_FINDINGS
 ): AuditFindingCandidate[] {
   const deduped: AuditFindingCandidate[] = [];
-  const seen = new Set<string>();
 
   for (const candidate of rankCandidates(candidates)) {
-    const fingerprint = candidateFingerprint(candidate);
-    if (seen.has(fingerprint)) continue;
-    seen.add(fingerprint);
+    const existingIndex = deduped.findIndex((existing) =>
+      candidatesShouldMerge(existing, candidate)
+    );
+    if (existingIndex >= 0) {
+      deduped[existingIndex] = mergeDuplicateCandidates(
+        deduped[existingIndex],
+        candidate
+      );
+      continue;
+    }
+
     deduped.push(candidate);
-    if (deduped.length >= MAX_CANDIDATE_FINDINGS) break;
+    if (deduped.length >= limit) break;
   }
 
   return deduped;
@@ -1092,6 +1432,12 @@ export async function runAudit(
   const evidenceSignals = collectEvidenceSignals(solanaAnalysis, evmAnalysis);
   const topSignal = evidenceSignals[0];
   const candidateSeeds = selectCandidateSeeds(evidenceSignals);
+  const exploratoryLeads = await runExploratoryNeighborhoodPass(
+    runtime,
+    target,
+    category,
+    ingestion
+  );
   let baseCandidates: AuditFindingCandidate[] = [];
 
   if (candidateSeeds.length > 0) {
@@ -1101,9 +1447,46 @@ export async function runAudit(
         reportId,
         seed,
         relatedSignalsForSeed(seed, evidenceSignals),
-        createPocForSeed(seed, pocFramework, solanaAnalysis, evmAnalysis)
+        createPocForSeed(seed, pocFramework, solanaAnalysis, evmAnalysis),
+        {
+          origin: "analyzer",
+          neighborhoodIds: findNeighborhoodIdsForFiles(ingestion, [seed.file]),
+        }
       )
     );
+  }
+
+  if (exploratoryLeads.length > 0 && ingestion) {
+    const exploratoryCandidates = exploratoryLeads.map((lead) => {
+      const exploratorySignal = exploratorySignalFromLead(category, ingestion, lead);
+      const location = `${exploratorySignal.file}:${exploratorySignal.line}`;
+
+      return buildCandidateFinding(
+        target,
+        reportId,
+        exploratorySignal,
+        [exploratorySignal],
+        undefined,
+        {
+          origin: "exploration",
+          originNotes: [lead.rationale],
+          neighborhoodIds: [lead.neighborhoodId],
+          extraArtifacts: [
+            {
+              type: "exploration",
+              label: `Exploratory lead: ${lead.label}`,
+              description: lead.rationale,
+              location,
+            },
+          ],
+        }
+      );
+    });
+
+    baseCandidates = dedupeRankedCandidates([
+      ...baseCandidates,
+      ...exploratoryCandidates,
+    ], MAX_CANDIDATE_FINDINGS + MAX_EXPLORATORY_LEADS);
   }
 
   if (baseCandidates.length === 0) {
@@ -1123,12 +1506,16 @@ export async function runAudit(
     baseCandidates = [
       {
         candidateId: `${reportId}_c_0`,
+        origin: topSignal ? "analyzer" : "exploration",
         title: buildBaseTitle(target, topSignal),
         severity: fallbackSeverity,
         confidence: defaultConfidenceForEvidence(fallbackEvidence),
         description: buildBaseDescription(topSignal),
         impact: buildImpact(topSignal),
         whyFlagged: fallbackWhyFlagged,
+        originNotes: topSignal
+          ? undefined
+          : ["Fallback hypothesis produced because neither analyzer signals nor exploratory neighborhood leads were available."],
         affectedSurface: buildAffectedSurface(evidenceSignals),
         recommendations: [
           "Confirm the issue is in-scope for the program (if applicable).",
@@ -1141,6 +1528,27 @@ export async function runAudit(
       },
     ];
   }
+
+  const candidateSeedContext = baseCandidates
+    .map((candidate) =>
+      [
+        `SeedId: ${candidate.candidateId}`,
+        `Origin: ${candidate.origin}`,
+        `Title: ${candidate.title}`,
+        candidate.whyFlagged.length > 0
+          ? `Why flagged: ${candidate.whyFlagged.slice(0, 2).join(" | ")}`
+          : "",
+        candidate.neighborhoodIds?.length
+          ? `Neighborhoods: ${candidate.neighborhoodIds.join(", ")}`
+          : "",
+        candidate.originNotes?.length
+          ? `Origin notes: ${candidate.originNotes.slice(0, 2).join(" | ")}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
+    .join("\n\n");
 
   let base = reportFromPrimaryCandidate(
     reportId,
@@ -1161,6 +1569,14 @@ export async function runAudit(
         "Do NOT ignore the static analysis to propose different, ungrounded hypotheses.",
         "",
         analysisContext,
+        ""
+      );
+    }
+
+    if (exploratoryLeads.length > 0) {
+      promptParts.push(
+        "IMPORTANT: The following EXPLORATORY NEIGHBORHOOD LEADS came from repo-index reasoning rather than deterministic analyzers.",
+        "Treat them as hypotheses worth confirming or disproving from the actual code, especially if they reveal risky subsystems analyzers did not capture directly.",
         ""
       );
     }
@@ -1198,10 +1614,19 @@ export async function runAudit(
       promptParts.push(`ScopeContext: ${JSON.stringify(scopeContext)}`);
     }
 
+    if (candidateSeedContext) {
+      promptParts.push(
+        "",
+        "=== CANDIDATE SEEDS ===",
+        "When you elaborate one of these seeds, preserve its SeedId in the output so finding provenance remains attached.",
+        candidateSeedContext
+      );
+    }
+
     promptParts.push("", codeContext, "");
     promptParts.push(
       "Return STRICT JSON matching this TypeScript shape:",
-      `{ candidates: Array<{ title: string, severity: 'low'|'medium'|'high'|'critical', confidence: number, description: string, impact: string, whyFlagged: string[], affectedSurface: string[], recommendations: string[], poc: { framework: '${pocFramework}', text: string } }> }`
+      `{ candidates: Array<{ seedId?: string | null, title: string, severity: 'low'|'medium'|'high'|'critical', confidence: number, description: string, impact: string, whyFlagged: string[], affectedSurface: string[], recommendations: string[], poc: { framework: '${pocFramework}', text: string } }> }`
     );
 
     const prompt = promptParts.filter(Boolean).join("\n");
@@ -1223,11 +1648,29 @@ export async function runAudit(
       const parsedCandidates = coerceParsedCandidates(parsed);
 
       if (parsedCandidates.length > 0) {
-        const mergedCandidates = baseCandidates.map((candidate, index) =>
+        const parsedBySeedId = new Map<string, Record<string, unknown>>();
+        const unmatchedParsed: Array<Record<string, unknown>> = [];
+
+        for (const parsedCandidate of parsedCandidates) {
+          const seedId =
+            typeof parsedCandidate.seedId === "string"
+              ? parsedCandidate.seedId
+              : "";
+          if (
+            seedId &&
+            baseCandidates.some((candidate) => candidate.candidateId === seedId)
+          ) {
+            parsedBySeedId.set(seedId, parsedCandidate);
+          } else {
+            unmatchedParsed.push(parsedCandidate);
+          }
+        }
+
+        const mergedCandidates = baseCandidates.map((candidate) =>
           mergeCandidateWithParsedResult(
             target,
             candidate,
-            parsedCandidates[index],
+            parsedBySeedId.get(candidate.candidateId) ?? unmatchedParsed.shift(),
             pocFramework
           )
         );

@@ -63,9 +63,9 @@ flowchart TD
 - The system does inspect the real repo.
 - The model does read real code from focused neighborhoods.
 - The model still does not reason over the full repo as a connected system.
-- The analyzers currently decide too much of what the model sees as important.
+- The engine now also runs an exploratory neighborhood pass from the repo index, so analyzers no longer fully define the search space.
 - A missed file or missed signal can become a missed finding.
-- We now preserve multiple candidate findings, but they are still too analyzer-seeded and not exploratory enough.
+- We now preserve multiple candidate findings and track whether they came from analyzers, exploration, or both.
 - Proof labels are now more honest, but most current exploit artifacts are still draft templates rather than validated replays.
 
 ## 3. Why The Current Version Was Built This Way
@@ -92,7 +92,7 @@ For the product vision, that tradeoff is no longer good enough.
 
 The current engine should be described honestly as:
 
-"A grounded, category-aware audit pipeline that combines repo ingestion, repo indexing, security-neighborhood retrieval, static-analysis signals, multi-candidate LLM synthesis, and review gating."
+"A grounded, category-aware audit pipeline that combines repo ingestion, repo indexing, security-neighborhood retrieval, analyzer and exploratory candidate seeding, multi-candidate LLM synthesis, and review gating."
 
 It should not be described as:
 

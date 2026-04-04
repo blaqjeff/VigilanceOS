@@ -63,10 +63,10 @@ Done when:
 
 ## 5. Exploratory Discovery Beyond Analyzer Hits
 
-- [ ] Add a model-led exploratory pass over the repo index
-- [ ] Ask the model to nominate suspicious neighborhoods even when analyzers are silent
-- [ ] Merge exploratory candidates with analyzer-seeded candidates
-- [ ] Track which findings came from analyzers, exploration, or both
+- [x] Add a model-led exploratory pass over the repo index
+- [x] Ask the model to nominate suspicious neighborhoods even when analyzers are silent
+- [x] Merge exploratory candidates with analyzer-seeded candidates
+- [x] Track which findings came from analyzers, exploration, or both
 
 Done when:
 
@@ -150,8 +150,8 @@ This is the recommended implementation order:
 
 Start with:
 
-- add exploratory discovery beyond analyzer-seeded neighborhoods
 - begin separating reviewer judgment from auditor framing now that multiple findings are preserved
-- start surfacing exploratory-vs-analyzer provenance once those candidates exist
+- upgrade draft exploit templates into more target-specific proof artifacts
+- surface multi-candidate provenance and downgrade reasons more clearly in the UI
 
 Those three changes unlock the next credibility jump.
