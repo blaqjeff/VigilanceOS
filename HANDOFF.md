@@ -97,6 +97,7 @@ The following important local/source changes were reconciled:
 - Target-specific replay generation now resolves real repo symbols, files, imports, and instruction/function names through `src/analyzers/solana-guided-poc.ts`, `src/analyzers/evm-guided-poc.ts`, and `src/pipeline/audit.ts`, so controlled demo targets no longer fall back to blank class templates
 - Local replay-generation probes against `sealevel-attacks` and `damn-vulnerable-defi-shallow` now produce repo-anchored `guided_replay` artifacts that avoid the template detector while still remaining honestly unvalidated
 - The old class-template generators (`src/analyzers/solana-poc.ts` and `src/analyzers/evm-poc.ts`) are no longer part of the active path and have been removed to keep the repo aligned with the guided-replay architecture
+- The operator console now surfaces ranked candidate findings inside the job-detail modal, shows discovery provenance (`analyzer`, `exploration`, `analyzer+exploration`), displays candidate counts on finding cards, and explains publish / human-review / discard outcomes through explicit outcome-driver summaries instead of relying on implicit reviewer text alone
 
 ### Important note about earlier failures
 
@@ -671,9 +672,9 @@ If continuing in a new thread, start here:
 
 That work should prioritize:
 
-- surfacing finding provenance and downgrade reasons more clearly in the UI once reviewer behavior is stronger
 - rerunning the controlled demo targets with the stronger reviewer and repo-anchored guided replay artifacts before final demo recording
 - capturing operator-facing demo material only after the UI can explain provenance, proof state, and downgrade reasons clearly
+- tightening any remaining false positives that show up during the final controlled reruns before recording submission material
 
 After the pivot reaches a believable multi-finding state, move into:
 

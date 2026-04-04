@@ -65,6 +65,25 @@ type EvidenceBundle = {
   reproduction: ReproductionGuide;
 };
 
+type FindingOrigin = "analyzer" | "exploration" | "analyzer+exploration";
+
+type AuditFindingCandidate = {
+  candidateId: string;
+  origin: FindingOrigin;
+  title: string;
+  severity: "low" | "medium" | "high" | "critical";
+  confidence: number;
+  description: string;
+  impact?: string;
+  whyFlagged: string[];
+  originNotes?: string[];
+  neighborhoodIds?: string[];
+  affectedSurface?: string[];
+  recommendations?: string[];
+  evidence?: EvidenceBundle;
+  poc?: { framework: string; text: string };
+};
+
 type AuditReport = {
   reportId: string;
   targetId: string;
@@ -78,6 +97,7 @@ type AuditReport = {
   recommendations?: string[];
   evidence?: EvidenceBundle;
   poc?: { framework: string; text: string };
+  candidateFindings?: AuditFindingCandidate[];
 };
 
 type ReviewerVerdict = {
@@ -286,6 +306,39 @@ function proofLabel(proofLevel: EvidenceProofLevel): string {
   }
 }
 
+function originTone(origin: FindingOrigin): string {
+  switch (origin) {
+    case "analyzer":
+      return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+    case "exploration":
+      return "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300";
+    default:
+      return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
+  }
+}
+
+function originLabel(origin: FindingOrigin): string {
+  switch (origin) {
+    case "analyzer":
+      return "analyzer";
+    case "exploration":
+      return "exploration";
+    default:
+      return "analyzer + exploration";
+  }
+}
+
+function verdictTone(verdict: ReviewerVerdict["verdict"]): string {
+  switch (verdict) {
+    case "publish":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "needs_human_review":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    default:
+      return "border-red-500/30 bg-red-500/10 text-red-300";
+  }
+}
+
 function formatPercent(value: number): string {
   return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
 }
@@ -311,6 +364,60 @@ function countArtifactEvidence(report?: AuditReport): string | null {
   if (!report?.evidence) return null;
 
   return `${report.evidence.traces.length} traces | ${report.evidence.artifacts.length} artifacts | ${report.evidence.reproduction.steps.length} replay steps`;
+}
+
+function candidateCount(report?: AuditReport): number {
+  return report?.candidateFindings?.length ?? (report ? 1 : 0);
+}
+
+function primaryCandidate(report?: AuditReport): AuditFindingCandidate | undefined {
+  return report?.candidateFindings?.[0];
+}
+
+function clipSentence(value?: string, max = 180): string {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  const sentence = normalized.match(/.+?[.!?](\s|$)/)?.[0]?.trim() ?? normalized;
+  return sentence.length > max ? `${sentence.slice(0, max - 1)}...` : sentence;
+}
+
+function outcomeDrivers(job: AuditJob): string[] {
+  const drivers: string[] = [];
+  const primary = primaryCandidate(job.report);
+  const candidateTotal = candidateCount(job.report);
+
+  if (primary?.origin) {
+    drivers.push(`Discovery source: ${originLabel(primary.origin)}.`);
+  }
+
+  if (job.report?.evidence) {
+    if (job.report.evidence.meetsSeverityBar) {
+      drivers.push(`Evidence bar cleared with ${proofLabel(job.report.evidence.proofLevel)}.`);
+    } else {
+      drivers.push(
+        `Evidence bar not cleared because proof is only ${proofLabel(job.report.evidence.proofLevel)}.`
+      );
+    }
+  }
+
+  if (candidateTotal > 1) {
+    drivers.push(
+      `${candidateTotal - 1} additional candidate${candidateTotal - 1 === 1 ? "" : "s"} preserved for comparison.`
+    );
+  }
+
+  if (job.verdict?.rationale) {
+    const rationale = clipSentence(job.verdict.rationale, 220);
+    if (job.state === "needs_human_review") {
+      drivers.push(`Queued for analyst review: ${rationale}`);
+    } else if (job.state === "discarded") {
+      drivers.push(`Reviewer rejected it: ${rationale}`);
+    } else if (job.state === "published") {
+      drivers.push(`Reviewer allowed publication: ${rationale}`);
+    }
+  }
+
+  return drivers.slice(0, 4);
 }
 
 function scoutStatusTone(status: ScoutWatcherStatus): string {
@@ -482,6 +589,114 @@ function LifecycleBar({ job }: { job: AuditJob }) {
   );
 }
 
+function CandidateFindingCard({
+  candidate,
+  primary = false,
+}: {
+  candidate: AuditFindingCandidate;
+  primary?: boolean;
+}) {
+  const evidence = candidate.evidence;
+  const counts = evidence
+    ? `${evidence.traces.length} traces | ${evidence.artifacts.length} artifacts | ${evidence.reproduction.steps.length} replay steps`
+    : null;
+
+  return (
+    <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {primary && (
+            <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
+              primary
+            </span>
+          )}
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${severityTone(candidate.severity)}`}>
+            {candidate.severity}
+          </span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(candidate.origin)}`}>
+            {originLabel(candidate.origin)}
+          </span>
+          {evidence && (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(evidence.proofLevel)}`}>
+              {proofLabel(evidence.proofLevel)}
+            </span>
+          )}
+          {evidence && (
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${
+                evidence.meetsSeverityBar
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-red-500/30 bg-red-500/10 text-red-300"
+              }`}
+            >
+              {evidence.meetsSeverityBar ? "bar cleared" : "bar not cleared"}
+            </span>
+          )}
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${confidenceTone(candidate.confidence)}`}>
+          auditor {formatPercent(candidate.confidence)}
+        </span>
+      </div>
+
+      <h4 className="mt-3 text-sm font-semibold text-slate-100">{candidate.title}</h4>
+      <p className="mt-2 text-sm leading-6 text-slate-400">{candidate.description}</p>
+
+      {counts && (
+        <p className="mt-3 text-[10px] uppercase tracking-[0.2em] text-slate-500">{counts}</p>
+      )}
+
+      {candidate.originNotes && candidate.originNotes.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Origin Notes</p>
+          <ul className="mt-2 space-y-1 text-sm text-slate-400">
+            {candidate.originNotes.slice(0, 2).map((note, index) => (
+              <li key={index} className="flex gap-2">
+                <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-fuchsia-400/50" />
+                {note}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {candidate.whyFlagged.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Why This Candidate Survived</p>
+          <ul className="mt-2 space-y-1 text-sm text-slate-400">
+            {candidate.whyFlagged.slice(0, 3).map((reason, index) => (
+              <li key={index} className="flex gap-2">
+                <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400/50" />
+                {reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {(candidate.neighborhoodIds?.length || candidate.affectedSurface?.length) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(candidate.neighborhoodIds ?? []).slice(0, 4).map((id) => (
+            <span
+              key={id}
+              className="rounded-lg border border-fuchsia-500/20 bg-fuchsia-500/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-fuchsia-200"
+            >
+              {id}
+            </span>
+          ))}
+          {(candidate.affectedSurface ?? []).slice(0, 4).map((surface) => (
+            <span
+              key={surface}
+              className="rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-300"
+            >
+              {surface}
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Job detail modal
 // ---------------------------------------------------------------------------
@@ -493,12 +708,16 @@ function JobDetailPanel({
   job: AuditJob;
   onClose: () => void;
 }) {
+  const candidates = job.report?.candidateFindings ?? [];
+  const primary = primaryCandidate(job.report);
+  const drivers = outcomeDrivers(job);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <div
-        className="relative max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl"
+        className="relative max-h-[85vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-white/10 bg-slate-950 p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -559,6 +778,14 @@ function JobDetailPanel({
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${severityTone(job.report.severity)}`}>
                 {job.report.severity}
               </span>
+              {primary?.origin && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${originTone(primary.origin)}`}>
+                  {originLabel(primary.origin)}
+                </span>
+              )}
+              <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
+                {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
+              </span>
               {typeof job.report.confidence === "number" && (
                 <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${confidenceTone(job.report.confidence)}`}>
                   auditor {formatPercent(job.report.confidence)}
@@ -603,6 +830,20 @@ function JobDetailPanel({
               </div>
             )}
 
+            {drivers.length > 0 && (
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <p className="text-xs uppercase tracking-widest text-slate-500">Outcome Drivers</p>
+                <ul className="mt-3 space-y-2 text-sm text-slate-300">
+                  {drivers.map((driver, index) => (
+                    <li key={index} className="flex gap-2">
+                      <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400/50" />
+                      {driver}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {job.report.evidence && (
               <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -612,6 +853,31 @@ function JobDetailPanel({
                   </span>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-300">{job.report.evidence.summary}</p>
+              </div>
+            )}
+
+            {candidates.length > 0 && (
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-widest text-slate-500">Candidate Findings</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Ranked candidates preserved by the auditor before the reviewer decided the final job outcome.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
+                    {candidates.length} total
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  {candidates.map((candidate, index) => (
+                    <CandidateFindingCard
+                      key={candidate.candidateId ?? `${candidate.title}-${index}`}
+                      candidate={candidate}
+                      primary={index === 0}
+                    />
+                  ))}
+                </div>
               </div>
             )}
 
@@ -736,13 +1002,7 @@ function JobDetailPanel({
           <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/80 p-5">
             <div className="flex items-center gap-3 mb-3">
               <h3 className="text-lg font-semibold text-white">Reviewer Verdict</h3>
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${
-                job.verdict.verdict === "publish"
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                  : job.verdict.verdict === "needs_human_review"
-                    ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                  : "border-red-500/30 bg-red-500/10 text-red-300"
-              }`}>
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${verdictTone(job.verdict.verdict)}`}>
                 {job.verdict.verdict.replace(/_/g, " ")}
               </span>
               <span className="text-sm text-slate-400">
@@ -1670,72 +1930,89 @@ export default function Home() {
               <span>
                 {publishedJobs.length} published | {needsHumanReviewJobs.length} awaiting analyst review | {discardedJobs.length} discarded
               </span>
-              <span className="text-slate-600">Open any card for proof, artifacts, PoC, and timeline</span>
+              <span className="text-slate-600">Open any card for candidates, provenance, proof state, downgrade reasons, and timeline</span>
             </div>
 
             {publishedJobs.length > 0 ? (
-              publishedJobs.slice(0, 8).map((job) => (
-                <article
-                  key={job.jobId}
-                  className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30 cursor-pointer hover:border-emerald-400/20 transition"
-                  onClick={() => setSelectedJob(job)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "high")}`}>
-                        {job.report?.severity ?? "high"}
-                      </span>
-                      {job.report?.evidence && (
-                        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
-                          {proofLabel(job.report.evidence.proofLevel)}
+              publishedJobs.slice(0, 8).map((job) => {
+                const primary = primaryCandidate(job.report);
+                const drivers = outcomeDrivers(job);
+                return (
+                  <article
+                    key={job.jobId}
+                    className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30 cursor-pointer hover:border-emerald-400/20 transition"
+                    onClick={() => setSelectedJob(job)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "high")}`}>
+                          {job.report?.severity ?? "high"}
                         </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {job.report && typeof job.report.confidence === "number" && (
-                        <span className="text-xs text-cyan-300">
-                          auditor {formatPercent(job.report.confidence)}
+                        {job.report?.evidence && (
+                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
+                            {proofLabel(job.report.evidence.proofLevel)}
+                          </span>
+                        )}
+                        {primary?.origin && (
+                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(primary.origin)}`}>
+                            {originLabel(primary.origin)}
+                          </span>
+                        )}
+                        <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-300">
+                          {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
                         </span>
-                      )}
-                      {job.verdict && (
-                        <span className="text-xs text-emerald-400">
-                          reviewer {formatPercent(job.verdict.confidence)}
-                        </span>
-                      )}
-                      <span className="text-xs text-slate-500">{job.target.displayName}</span>
-                    </div>
-                  </div>
-                  <h3 className="mt-4 text-lg font-semibold text-white">
-                    {job.report?.title ?? "Finding"}
-                  </h3>
-                  {job.report?.evidence && (
-                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-cyan-300">
-                      {job.report.evidence.summary}
-                    </p>
-                  )}
-                  {countArtifactEvidence(job.report) && (
-                    <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">
-                      {countArtifactEvidence(job.report)}
-                    </p>
-                  )}
-                  <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
-                    {job.report?.description ?? ""}
-                  </p>
-                  {job.verdict && (
-                    <div className="mt-3 flex items-center gap-2">
-                      <div className="h-1 flex-1 rounded-full bg-slate-800 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-emerald-400 transition-all duration-500"
-                          style={{ width: `${Math.round(job.verdict.confidence * 100)}%` }}
-                        />
                       </div>
-                      <span className="text-[10px] text-slate-500 whitespace-nowrap">
-                        reviewer confidence
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {job.report && typeof job.report.confidence === "number" && (
+                          <span className="text-xs text-cyan-300">
+                            auditor {formatPercent(job.report.confidence)}
+                          </span>
+                        )}
+                        {job.verdict && (
+                          <span className="text-xs text-emerald-400">
+                            reviewer {formatPercent(job.verdict.confidence)}
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-500">{job.target.displayName}</span>
+                      </div>
                     </div>
-                  )}
-                </article>
-              ))
+                    <h3 className="mt-4 text-lg font-semibold text-white">
+                      {job.report?.title ?? "Finding"}
+                    </h3>
+                    {job.report?.evidence && (
+                      <p className="mt-3 text-xs uppercase tracking-[0.2em] text-cyan-300">
+                        {job.report.evidence.summary}
+                      </p>
+                    )}
+                    {countArtifactEvidence(job.report) && (
+                      <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+                        {countArtifactEvidence(job.report)}
+                      </p>
+                    )}
+                    <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
+                      {job.report?.description ?? ""}
+                    </p>
+                    {drivers.length > 0 && (
+                      <p className="mt-3 text-xs leading-5 text-slate-500 line-clamp-3">
+                        {drivers.join(" | ")}
+                      </p>
+                    )}
+                    {job.verdict && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <div className="h-1 flex-1 rounded-full bg-slate-800 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-emerald-400 transition-all duration-500"
+                            style={{ width: `${Math.round(job.verdict.confidence * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                          reviewer confidence
+                        </span>
+                      </div>
+                    )}
+                  </article>
+                );
+              })
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
                 Published findings will appear here after a target completes the full golden path: submit → approve → audit → review.
@@ -1750,48 +2027,65 @@ export default function Home() {
                     {needsHumanReviewJobs.length}
                   </span>
                 </div>
-                {needsHumanReviewJobs.slice(0, 6).map((job) => (
-                  <article
-                    key={job.jobId}
-                    className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-5 cursor-pointer hover:border-amber-400/40 transition"
-                    onClick={() => setSelectedJob(job)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "medium")}`}>
-                          {job.report?.severity ?? "medium"}
-                        </span>
-                        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
-                          analyst review
-                        </span>
-                        {job.report?.evidence && (
-                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
-                            {proofLabel(job.report.evidence.proofLevel)}
+                {needsHumanReviewJobs.slice(0, 6).map((job) => {
+                  const primary = primaryCandidate(job.report);
+                  const drivers = outcomeDrivers(job);
+                  return (
+                    <article
+                      key={job.jobId}
+                      className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-5 cursor-pointer hover:border-amber-400/40 transition"
+                      onClick={() => setSelectedJob(job)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "medium")}`}>
+                            {job.report?.severity ?? "medium"}
                           </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {job.verdict && (
-                          <span className="text-xs text-amber-300">
-                            reviewer {formatPercent(job.verdict.confidence)}
+                          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
+                            analyst review
                           </span>
-                        )}
-                        <span className="text-xs text-slate-500">{job.target.displayName}</span>
+                          {job.report?.evidence && (
+                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
+                              {proofLabel(job.report.evidence.proofLevel)}
+                            </span>
+                          )}
+                          {primary?.origin && (
+                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(primary.origin)}`}>
+                              {originLabel(primary.origin)}
+                            </span>
+                          )}
+                          <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-300">
+                            {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {job.verdict && (
+                            <span className="text-xs text-amber-300">
+                              reviewer {formatPercent(job.verdict.confidence)}
+                            </span>
+                          )}
+                          <span className="text-xs text-slate-500">{job.target.displayName}</span>
+                        </div>
                       </div>
-                    </div>
-                    <h3 className="mt-4 text-lg font-semibold text-white">
-                      {job.report?.title ?? "Candidate finding"}
-                    </h3>
-                    {countArtifactEvidence(job.report) && (
-                      <p className="mt-3 text-xs uppercase tracking-[0.2em] text-amber-300">
-                        {countArtifactEvidence(job.report)}
+                      <h3 className="mt-4 text-lg font-semibold text-white">
+                        {job.report?.title ?? "Candidate finding"}
+                      </h3>
+                      {countArtifactEvidence(job.report) && (
+                        <p className="mt-3 text-xs uppercase tracking-[0.2em] text-amber-300">
+                          {countArtifactEvidence(job.report)}
+                        </p>
+                      )}
+                      <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
+                        {job.verdict?.rationale ?? job.report?.description ?? ""}
                       </p>
-                    )}
-                    <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
-                      {job.verdict?.rationale ?? job.report?.description ?? ""}
-                    </p>
-                  </article>
-                ))}
+                      {drivers.length > 0 && (
+                        <p className="mt-3 text-xs leading-5 text-amber-200/80 line-clamp-3">
+                          {drivers.join(" | ")}
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
               </>
             )}
 
@@ -1804,37 +2098,56 @@ export default function Home() {
                     {discardedJobs.length}
                   </span>
                 </div>
-                {discardedJobs.slice(0, 4).map((job) => (
-                  <article
-                    key={job.jobId}
-                    className="rounded-2xl border border-white/5 bg-slate-900/50 p-4 cursor-pointer hover:border-white/10 transition opacity-70"
-                    onClick={() => setSelectedJob(job)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h4 className="text-sm font-medium text-slate-300">
-                          {job.report?.title ?? job.target.displayName}
-                        </h4>
-                        {job.report?.evidence && (
-                          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                            {proofLabel(job.report.evidence.proofLevel)} evidence
+                {discardedJobs.slice(0, 4).map((job) => {
+                  const primary = primaryCandidate(job.report);
+                  const drivers = outcomeDrivers(job);
+                  return (
+                    <article
+                      key={job.jobId}
+                      className="rounded-2xl border border-white/5 bg-slate-900/50 p-4 cursor-pointer hover:border-white/10 transition opacity-70"
+                      onClick={() => setSelectedJob(job)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-sm font-medium text-slate-300">
+                              {job.report?.title ?? job.target.displayName}
+                            </h4>
+                            {primary?.origin && (
+                              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(primary.origin)}`}>
+                                {originLabel(primary.origin)}
+                              </span>
+                            )}
+                            <span className="rounded-full border border-white/10 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                              {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          {job.report?.evidence && (
+                            <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                              {proofLabel(job.report.evidence.proofLevel)} evidence
+                            </p>
+                          )}
+                          {countArtifactEvidence(job.report) && (
+                            <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-600">
+                              {countArtifactEvidence(job.report)}
+                            </p>
+                          )}
+                          <p className="mt-1 text-xs text-slate-500">
+                            {clipSentence(job.verdict?.rationale, 120)}
                           </p>
-                        )}
-                        {countArtifactEvidence(job.report) && (
-                          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-600">
-                            {countArtifactEvidence(job.report)}
-                          </p>
-                        )}
-                        <p className="mt-1 text-xs text-slate-500">
-                          {job.verdict?.rationale?.slice(0, 100)}…
-                        </p>
+                          {drivers.length > 0 && (
+                            <p className="mt-2 text-[11px] leading-5 text-slate-600 line-clamp-3">
+                              {drivers.join(" | ")}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-xs text-slate-600">
+                          {job.verdict ? `${Math.round(job.verdict.confidence * 100)}%` : ""}
+                        </span>
                       </div>
-                      <span className="text-xs text-slate-600">
-                        {job.verdict ? `${Math.round(job.verdict.confidence * 100)}%` : ""}
-                      </span>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </>
             )}
           </div>

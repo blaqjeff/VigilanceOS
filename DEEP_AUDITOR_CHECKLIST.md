@@ -111,10 +111,10 @@ Done when:
 
 ## 9. UI And Report Evolution
 
-- [ ] Update findings UI to show multiple candidate findings per job
-- [ ] Surface neighborhood source, evidence source, and proof state
-- [ ] Show why a finding was downgraded, queued, or discarded
-- [ ] Keep the operator flow understandable even as multi-finding jobs appear
+- [x] Update findings UI to show multiple candidate findings per job
+- [x] Surface neighborhood source, evidence source, and proof state
+- [x] Show why a finding was downgraded, queued, or discarded
+- [x] Keep the operator flow understandable even as multi-finding jobs appear
 
 Done when:
 
@@ -150,8 +150,8 @@ This is the recommended implementation order:
 
 Start with:
 
-- surface multi-candidate provenance and downgrade reasons more clearly in the UI
 - rerun the controlled demo targets with the stronger reviewer and repo-anchored guided replay artifacts
 - capture operator-facing demo material only after the UI can explain provenance, proof state, and downgrade reasons clearly
+- tighten any remaining false positives that show up during the final controlled reruns before recording submission material
 
 Those three changes unlock the next credibility jump.

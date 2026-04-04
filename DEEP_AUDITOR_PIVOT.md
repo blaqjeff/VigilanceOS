@@ -67,6 +67,7 @@ flowchart TD
 - A missed file or missed signal can become a missed finding.
 - We now preserve multiple candidate findings and track whether they came from analyzers, exploration, or both.
 - Proof labels are now more honest, and replay artifacts are now repo-anchored guided harnesses, but they are still not validated or executed proof.
+- The operator UI now exposes candidate provenance, candidate counts, and verdict drivers so review outcomes are understandable instead of hidden inside raw reviewer prose.
 
 ## 3. Why The Current Version Was Built This Way
 
