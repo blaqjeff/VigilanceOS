@@ -107,17 +107,103 @@ export type SourceFile = {
 };
 
 /**
+ * Repo-wide symbol extracted during indexing.
+ */
+export type RepoSymbolKind =
+  | "contract"
+  | "library"
+  | "interface"
+  | "modifier"
+  | "function"
+  | "program"
+  | "instruction"
+  | "account_struct"
+  | "state_struct";
+
+export type RepoSymbol = {
+  kind: RepoSymbolKind;
+  name: string;
+  file: string;
+  line: number;
+  signature?: string;
+  tags?: string[];
+};
+
+export type RepoHotspotKind =
+  | "entrypoint"
+  | "auth"
+  | "oracle"
+  | "external_call"
+  | "value_flow"
+  | "upgradeability"
+  | "cpi"
+  | "pda"
+  | "account_validation";
+
+export type RepoHotspot = {
+  kind: RepoHotspotKind;
+  file: string;
+  line: number;
+  reason: string;
+  priority: number;
+  relatedSymbol?: string;
+};
+
+export type RepoImportEdge = {
+  from: string;
+  target: string;
+};
+
+export type RepoIndex = {
+  indexedFiles: number;
+  skippedIndexedFiles: string[];
+  topDirectories: string[];
+  extensionCounts: Record<string, number>;
+  entryFiles: string[];
+  configFiles: string[];
+  testFiles: string[];
+  symbolCounts: Record<string, number>;
+  symbols: RepoSymbol[];
+  imports: RepoImportEdge[];
+  hotspots: RepoHotspot[];
+  summary: string;
+};
+
+export type MaterializationAttempt = {
+  strategy: string;
+  ok: boolean;
+  timeoutMs?: number;
+  durationMs?: number;
+  exitCode?: number | null;
+  stdoutTail?: string;
+  stderrTail?: string;
+  error?: string;
+};
+
+export type MaterializationInfo = {
+  source: "github_clone" | "local_path";
+  localPath: string;
+  cloneUrl?: string;
+  reusedExisting?: boolean;
+  attempts: MaterializationAttempt[];
+};
+
+/**
  * Result of ingesting a target — the actual source code and metadata.
  */
 export type IngestionResult = {
   /** Where the source was materialized on disk (for cleanup later) */
   localPath: string;
-  /** Whether this was cloned (vs already local) */
+  /** Whether this is a system-managed clone that can be cleaned up after auditing */
   cloned: boolean;
+  /** How the target was materialized on disk */
+  materialization: MaterializationInfo;
   /** Primary category detected */
   category: TargetCategory;
   /** All detected categories (for mixed repos) */
   categories: TargetCategory[];
+  /** Repo-wide index used by later retrieval passes */
+  repoIndex: RepoIndex;
   /** Relevant source files extracted for auditing */
   sourceFiles: SourceFile[];
   /** Total number of source files found */

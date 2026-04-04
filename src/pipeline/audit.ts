@@ -76,6 +76,9 @@ function buildCodeContext(ingestion: IngestionResult): string {
   sections.push(ingestion.structureSummary);
   sections.push("");
 
+  sections.push(ingestion.repoIndex.summary);
+  sections.push("");
+
   // Source files
   sections.push(`=== SOURCE FILES (${ingestion.sourceFiles.length} of ${ingestion.totalFilesFound} total) ===`);
 
