@@ -66,7 +66,7 @@ flowchart TD
 - The engine now also runs an exploratory neighborhood pass from the repo index, so analyzers no longer fully define the search space.
 - A missed file or missed signal can become a missed finding.
 - We now preserve multiple candidate findings and track whether they came from analyzers, exploration, or both.
-- Proof labels are now more honest, but most current exploit artifacts are still draft templates rather than validated replays.
+- Proof labels are now more honest, and replay artifacts are now repo-anchored guided harnesses, but they are still not validated or executed proof.
 
 ## 3. Why The Current Version Was Built This Way
 
@@ -214,6 +214,8 @@ Proof should be separated into states like:
 - `guided_replay`
 - `validated_replay`
 - `executed_poc`
+
+The current guided-replay generators now resolve real files, source symbols, contract/program names, and account or function surfaces from the repo index. That is a meaningful credibility jump, but it still stops short of validation or execution.
 
 ### F. Strengthen reviewer independence
 

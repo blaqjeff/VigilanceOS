@@ -91,9 +91,12 @@ The following important local/source changes were reconciled:
 - Legacy Eliza memory persistence can still fail in this environment, but those writes are now non-fatal and no longer break canonical job creation
 - The deep-auditor pivot now includes repo indexing, security-neighborhood retrieval, and ranked multi-candidate audit output stored on `report.candidateFindings`
 - Live GitHub ingestion validation now succeeds against both primary demo repos through the real ingestion pipeline, including clean clone / cleanup behavior outside sandbox constraints
-- Evidence labels are now honest end-to-end: analyzer-generated exploit harnesses surface as `template_only`, draft replay artifacts as `guided_replay`, and high/critical findings no longer clear the evidence bar unless stronger validation exists
+- Evidence labels are now honest end-to-end: generic exploit templates surface as `template_only`, repo-anchored replay drafts surface as `guided_replay`, and high/critical findings no longer clear the evidence bar unless stronger validation exists
 - The audit engine now runs an exploratory repo-index pass before final synthesis, merges exploration-seeded candidates with analyzer-seeded candidates, and tracks candidate provenance as `analyzer`, `exploration`, or `analyzer+exploration`
 - The reviewer now runs a counter-evidence-first pass on focused code neighborhoods, trims auditor framing down to a structured claim summary, detects standard framework protections deterministically, and can override overconfident reviewer verdicts when blocking protections are found
+- Target-specific replay generation now resolves real repo symbols, files, imports, and instruction/function names through `src/analyzers/solana-guided-poc.ts`, `src/analyzers/evm-guided-poc.ts`, and `src/pipeline/audit.ts`, so controlled demo targets no longer fall back to blank class templates
+- Local replay-generation probes against `sealevel-attacks` and `damn-vulnerable-defi-shallow` now produce repo-anchored `guided_replay` artifacts that avoid the template detector while still remaining honestly unvalidated
+- The old class-template generators (`src/analyzers/solana-poc.ts` and `src/analyzers/evm-poc.ts`) are no longer part of the active path and have been removed to keep the repo aligned with the guided-replay architecture
 
 ### Important note about earlier failures
 
@@ -668,9 +671,9 @@ If continuing in a new thread, start here:
 
 That work should prioritize:
 
-- upgrading target-specific PoC generation so more findings rise above `template_only`
 - surfacing finding provenance and downgrade reasons more clearly in the UI once reviewer behavior is stronger
-- rerunning the controlled demo targets with the stronger reviewer before final demo recording
+- rerunning the controlled demo targets with the stronger reviewer and repo-anchored guided replay artifacts before final demo recording
+- capturing operator-facing demo material only after the UI can explain provenance, proof state, and downgrade reasons clearly
 
 After the pivot reaches a believable multi-finding state, move into:
 

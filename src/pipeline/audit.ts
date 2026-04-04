@@ -17,10 +17,10 @@ import type {
 } from "./types.js";
 import { analyzeSolanaRust, formatSignalsForPrompt } from "../analyzers/solana.js";
 import type { SolanaAnalysisResult } from "../analyzers/solana.js";
-import { generateSolanaPoC } from "../analyzers/solana-poc.js";
+import { generateSolanaPoC } from "../analyzers/solana-guided-poc.js";
 import { analyzeSolidityEvm, formatEvmSignalsForPrompt } from "../analyzers/evm.js";
 import type { EvmAnalysisResult } from "../analyzers/evm.js";
-import { generateEvmPoC } from "../analyzers/evm-poc.js";
+import { generateEvmPoC } from "../analyzers/evm-guided-poc.js";
 import { simpleHash } from "./utils.js";
 
 // ---------------------------------------------------------------------------
@@ -753,22 +753,36 @@ function relatedSignalsForSeed(seed: AnalyzerSignal, signals: AnalyzerSignal[]):
 }
 
 function createPocForSeed(
+  target: Target,
   seed: AnalyzerSignal,
   pocFramework: PocFramework,
+  ingestion?: IngestionResult,
   solanaAnalysis?: SolanaAnalysisResult,
   evmAnalysis?: EvmAnalysisResult
 ): AuditReport["poc"] {
   if (solanaAnalysis) {
     return {
       framework: pocFramework,
-      text: generateSolanaPoC(solanaAnalysis, seed.vulnClass as any),
+      text: generateSolanaPoC(solanaAnalysis, seed.vulnClass as any, {
+        targetName: target.displayName,
+        seed: seed as any,
+        repoIndex: ingestion?.repoIndex,
+        neighborhoods: ingestion?.neighborhoods,
+        sourceFiles: ingestion?.sourceFiles,
+      }),
     };
   }
 
   if (evmAnalysis) {
     return {
       framework: pocFramework,
-      text: generateEvmPoC(evmAnalysis, seed.vulnClass as any),
+      text: generateEvmPoC(evmAnalysis, seed.vulnClass as any, {
+        targetName: target.displayName,
+        seed: seed as any,
+        repoIndex: ingestion?.repoIndex,
+        neighborhoods: ingestion?.neighborhoods,
+        sourceFiles: ingestion?.sourceFiles,
+      }),
     };
   }
 
@@ -1211,10 +1225,60 @@ function coerceAnalyzerSignalsFromCandidate(
   ];
 }
 
+function pocAnchorScore(
+  poc: AuditFindingCandidate["poc"],
+  candidate?: AuditFindingCandidate
+): number {
+  if (!poc?.text?.trim()) return -100;
+
+  let score = 0;
+  if (hasVerificationMarker(poc, "executed_poc")) score += 50;
+  if (hasVerificationMarker(poc, "validated_replay")) score += 30;
+  if (hasSubstantialPocText(poc)) score += 5;
+  if (!looksLikeTemplatePoc(poc)) score += 12;
+  if (poc.framework !== "generic") score += 2;
+
+  if (!candidate) return score;
+
+  const haystack = normalizedPocText(poc);
+  const anchors = uniqueStrings([
+    ...(candidate.affectedSurface ?? []),
+    ...(candidate.neighborhoodIds ?? []),
+    ...candidate.evidence.traces.map((trace) => trace.file),
+    ...candidate.evidence.traces.map((trace) => `${trace.file}:${trace.line}`),
+    ...candidate.evidence.traces.flatMap((trace) =>
+      trace.file
+        .split("/")
+        .slice(-2)
+        .map((part) => part.replace(/\.[^.]+$/, ""))
+    ),
+  ]);
+
+  for (const anchor of anchors) {
+    if (anchor && haystack.includes(anchor.toLowerCase())) {
+      score += 2;
+    }
+  }
+
+  return score;
+}
+
+function selectPreferredPoc(
+  parsedPoc: AuditFindingCandidate["poc"],
+  fallback: AuditFindingCandidate["poc"],
+  candidate?: AuditFindingCandidate
+): AuditFindingCandidate["poc"] {
+  if (!fallback?.text?.trim()) return parsedPoc;
+  return pocAnchorScore(parsedPoc, candidate) >= pocAnchorScore(fallback, candidate)
+    ? parsedPoc
+    : fallback;
+}
+
 function normalizePoc(
   value: unknown,
   fallback: AuditFindingCandidate["poc"],
-  pocFramework: PocFramework
+  pocFramework: PocFramework,
+  baseCandidate?: AuditFindingCandidate
 ): AuditFindingCandidate["poc"] {
   if (!value || typeof value !== "object") {
     return fallback;
@@ -1231,10 +1295,12 @@ function normalizePoc(
     ? (parsed.framework as PocFramework)
     : pocFramework;
 
-  return {
+  const parsedPoc = {
     framework,
     text: parsed.text,
   };
+
+  return selectPreferredPoc(parsedPoc, fallback, baseCandidate);
 }
 
 function normalizeRecommendations(
@@ -1295,7 +1361,7 @@ function mergeCandidateWithParsedResult(
       ? parsedCandidate.affectedSurface.map((value) => String(value))
       : baseCandidate.affectedSurface ?? []
   );
-  const poc = normalizePoc(parsedCandidate.poc, baseCandidate.poc, pocFramework);
+  const poc = normalizePoc(parsedCandidate.poc, baseCandidate.poc, pocFramework, baseCandidate);
   const evidenceSignals = coerceAnalyzerSignalsFromCandidate(baseCandidate);
   const evidence = buildEvidenceBundle(
     target,
@@ -1698,7 +1764,7 @@ export async function runAudit(
         reportId,
         seed,
         relatedSignalsForSeed(seed, evidenceSignals),
-        createPocForSeed(seed, pocFramework, solanaAnalysis, evmAnalysis),
+        createPocForSeed(target, seed, pocFramework, ingestion, solanaAnalysis, evmAnalysis),
         {
           origin: "analyzer",
           neighborhoodIds: findNeighborhoodIdsForFiles(ingestion, [seed.file]),
@@ -1717,7 +1783,14 @@ export async function runAudit(
         reportId,
         exploratorySignal,
         [exploratorySignal],
-        undefined,
+        createPocForSeed(
+          target,
+          exploratorySignal,
+          pocFramework,
+          ingestion,
+          solanaAnalysis,
+          evmAnalysis
+        ),
         {
           origin: "exploration",
           originNotes: [lead.rationale],
@@ -2267,9 +2340,21 @@ export async function runAuditLegacy(
   // Generate a grounded PoC if we have analysis results
   let generatedPoC: string | null = null;
   if (solanaAnalysis && solanaAnalysis.signals.length > 0) {
-    generatedPoC = generateSolanaPoC(solanaAnalysis);
+    generatedPoC = generateSolanaPoC(solanaAnalysis, undefined, {
+      targetName: target.displayName,
+      seed: solanaAnalysis.signals[0],
+      repoIndex: ingestion?.repoIndex,
+      neighborhoods: ingestion?.neighborhoods,
+      sourceFiles: ingestion?.sourceFiles,
+    });
   } else if (evmAnalysis && evmAnalysis.signals.length > 0) {
-    generatedPoC = generateEvmPoC(evmAnalysis);
+    generatedPoC = generateEvmPoC(evmAnalysis, undefined, {
+      targetName: target.displayName,
+      seed: evmAnalysis.signals[0],
+      repoIndex: ingestion?.repoIndex,
+      neighborhoods: ingestion?.neighborhoods,
+      sourceFiles: ingestion?.sourceFiles,
+    });
   }
 
   try {

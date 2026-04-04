@@ -89,10 +89,10 @@ Done when:
 
 ## 7. Target-Specific PoC Generation
 
-- [ ] Upgrade generic PoC templates into target-specific harnesses where feasible
-- [ ] Fill in real imports, real functions, real paths, and real contract/program names
-- [ ] Separate "draft exploit harness" from "validated replay"
-- [ ] Prefer concrete replay steps when executable harnesses are not feasible
+- [x] Upgrade generic PoC templates into target-specific harnesses where feasible
+- [x] Fill in real imports, real functions, real paths, and real contract/program names
+- [x] Separate "draft exploit harness" from "validated replay"
+- [x] Prefer concrete replay steps when executable harnesses are not feasible
 
 Done when:
 
@@ -150,8 +150,8 @@ This is the recommended implementation order:
 
 Start with:
 
-- upgrade draft exploit templates into more target-specific proof artifacts
 - surface multi-candidate provenance and downgrade reasons more clearly in the UI
-- rerun the controlled demo targets with the stronger reviewer before recording final submission material
+- rerun the controlled demo targets with the stronger reviewer and repo-anchored guided replay artifacts
+- capture operator-facing demo material only after the UI can explain provenance, proof state, and downgrade reasons clearly
 
 Those three changes unlock the next credibility jump.
