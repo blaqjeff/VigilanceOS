@@ -1,5 +1,5 @@
 import type { IAgentRuntime } from "@elizaos/core";
-import { logger } from "@elizaos/core";
+import { logger, ModelType } from "@elizaos/core";
 import type {
   AuditReport,
   EvidenceArtifact,
@@ -780,7 +780,7 @@ export async function runAudit(
         `files: ${ingestion?.sourceFiles.length ?? 0}, prompt: ${Math.round(prompt.length / 1024)}KB)`
     );
 
-    const result = await (runtime as any).useModel?.("text_large", {
+    const result = await (runtime as any).useModel?.(ModelType.TEXT_LARGE, {
       prompt,
       maxTokens: 2200,
     });
@@ -963,7 +963,7 @@ export async function runReview(
       `[Review] Reviewing report for ${target.displayName} (severity: ${report.severity})`
     );
 
-    const result = await (runtime as any).useModel?.("text_large", {
+    const result = await (runtime as any).useModel?.(ModelType.TEXT_LARGE, {
       prompt,
       maxTokens: 900,
     });
@@ -1150,7 +1150,7 @@ export async function runAuditLegacy(
         `files: ${ingestion?.sourceFiles.length ?? 0}, prompt: ${Math.round(prompt.length / 1024)}KB)`
     );
 
-    const result = await (runtime as any).useModel?.("text_large", {
+    const result = await (runtime as any).useModel?.(ModelType.TEXT_LARGE, {
       prompt,
       maxTokens: 2000,
     });
@@ -1322,7 +1322,7 @@ export async function runReviewLegacy(
       `[Review] Reviewing report for ${target.displayName} (severity: ${report.severity})`
     );
 
-    const result = await (runtime as any).useModel?.("text_large", {
+    const result = await (runtime as any).useModel?.(ModelType.TEXT_LARGE, {
       prompt,
       maxTokens: 800,
     });

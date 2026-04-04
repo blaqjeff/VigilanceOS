@@ -1,0 +1,61 @@
+{
+  "name": "vigilanceos-qwen27b-vllm",
+  "market": "6Xt8hgVLLL2PSHC9NtJP8E8oTdA5ZJc95hZEnHcdqKqb",
+  "timeout": 90,
+  "replicas": 1,
+  "strategy": "SIMPLE",
+  "job_definition": {
+    "version": "0.1",
+    "type": "container",
+    "meta": {
+      "trigger": "api",
+      "system_resources": {
+        "required_vram": 24
+      }
+    },
+    "ops": [
+      {
+        "type": "container/run",
+        "id": "vllm-qwen27b",
+        "args": {
+          "image": "docker.io/vllm/vllm-openai:v0.10.2",
+          "gpu": true,
+          "expose": {
+            "port": 8000,
+            "type": "api",
+            "health_checks": [
+              {
+                "type": "http",
+                "path": "/health",
+                "method": "GET",
+                "expected_status": 200,
+                "continuous": true
+              }
+            ]
+          },
+          "resources": [
+            {
+              "type": "HF",
+              "repo": "cyankiwi/Qwen3.5-27B-AWQ-4bit",
+              "target": "/models/qwen27b"
+            }
+          ],
+          "cmd": [
+            "--model",
+            "/models/qwen27b",
+            "--served-model-name",
+            "Qwen3.5-27B-AWQ-4bit",
+            "--quantization",
+            "awq",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+            "--max-model-len",
+            "4096"
+          ]
+        }
+      }
+    ]
+  }
+}

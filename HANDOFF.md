@@ -9,6 +9,8 @@ Read this file first, then read `PROJECT_SCOPE.md`.
 ## 1. Source Of Truth
 
 - `PROJECT_SCOPE.md` is the primary source of truth for product intent, scope, priorities, tradeoffs, and quality bar.
+- `DEEP_AUDITOR_PIVOT.md` is the primary source of truth for the audit-engine pivot from the current MVP toward the deeper repo auditor.
+- `DEEP_AUDITOR_CHECKLIST.md` is the ranked implementation checklist for that pivot.
 - `VIGILANCE_REQUIREMENTS.md` is legacy challenge context only.
 
 If those documents differ, follow `PROJECT_SCOPE.md`.
@@ -654,19 +656,22 @@ If continuing in a new thread, start here:
 
 1. Read `HANDOFF.md`
 2. Read `PROJECT_SCOPE.md`
-3. Verify the current stack in `C:\VigilanceOS`
-4. Move into final demo hardening and submission prep
+3. Read `DEEP_AUDITOR_PIVOT.md`
+4. Read `DEEP_AUDITOR_CHECKLIST.md`
+5. Verify the current stack in `C:\VigilanceOS`
+6. Start the audit-engine pivot from checklist item 1
 
-That work should include:
+That work should prioritize:
 
-- preserving the current approved demo job(s) so they can be rerun as soon as a working model endpoint is available
-- preparing a short deployment/runbook for swapping in a self-hosted or replacement OpenAI-compatible endpoint
-- documenting the exact live-demo sequence for judges:
-  - Scout refresh
-  - target approval
-  - audit run
-  - reviewer result
-  - report / findings walkthrough
+- fixing repo ingestion reliability
+- building repo indexing and security-neighborhood retrieval
+- replacing the current single-finding audit contract with multi-candidate findings
+- tightening evidence honesty before further demo claims
+
+After the pivot reaches a believable multi-finding state, move into:
+
+- preserving demo targets and rerunnable jobs
+- documenting the exact live-demo sequence for judges
 - deciding whether Telegram should stay disabled for demo simplicity or be re-enabled once a fresh token is available
 
 After that, move directly into final demo hardening and submission prep.
