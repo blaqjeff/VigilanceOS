@@ -226,6 +226,13 @@ It should actively look for:
 - whether the exploit path is reachable
 - whether severity is overstated
 
+The current pivot now includes:
+
+- a counter-evidence-first review pass
+- focused review neighborhoods instead of the full flat context bundle
+- deterministic detection of common framework protections
+- policy hooks that can override an overconfident publish verdict when blocking protections are found
+
 ## 9. Submission-Day Truth After The Pivot
 
 If the pivot is implemented well enough, the honest demo claim becomes:

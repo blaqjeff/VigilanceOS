@@ -108,6 +108,27 @@ function buildCodeContext(ingestion: IngestionResult): string {
   return sections.join("\n");
 }
 
+function buildSourceFileContext(
+  files: SourceFile[],
+  label = "SOURCE FILES"
+): string {
+  if (files.length === 0) {
+    return "[No source files were extracted from the target.]";
+  }
+
+  const sections: string[] = [`=== ${label} (${files.length}) ===`];
+  for (const file of files) {
+    sections.push(
+      `\n--- FILE: ${file.relativePath} (${file.language}, ${file.originalSize} bytes${
+        file.truncated ? ", truncated" : ""
+      }) ---`
+    );
+    sections.push(file.content);
+  }
+
+  return sections.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Category-aware audit prompt builder
 // ---------------------------------------------------------------------------
@@ -308,6 +329,14 @@ type ExploratoryLead = {
   vulnerabilityClass: string;
   rationale: string;
   affectedFiles: string[];
+};
+
+type CounterEvidenceAssessment = {
+  counterEvidence: string[];
+  survivingRisks: string[];
+  protections: string[];
+  reachability: "blocked" | "uncertain" | "reachable";
+  confidence: number;
 };
 
 const VULNERABILITY_LABELS: Record<string, string> = {
@@ -1390,6 +1419,228 @@ function enforceReviewPolicy(
   return verdict;
 }
 
+function primaryCandidateFromReport(
+  report: AuditReport
+): AuditFindingCandidate | undefined {
+  return (
+    report.candidateFindings?.find(
+      (candidate) =>
+        candidate.title === report.title && candidate.severity === report.severity
+    ) ?? report.candidateFindings?.[0]
+  );
+}
+
+function normalizeAffectedPath(value: string): string {
+  return value.replace(/:\d+$/, "").trim();
+}
+
+function focusedReviewFiles(
+  ingestion: IngestionResult | undefined,
+  report: AuditReport
+): SourceFile[] {
+  if (!ingestion) return [];
+
+  const primaryCandidate = primaryCandidateFromReport(report);
+  const directPaths = new Set(
+    (report.affectedSurface ?? []).map(normalizeAffectedPath).filter(Boolean)
+  );
+  const neighborhoodIds = new Set(primaryCandidate?.neighborhoodIds ?? []);
+
+  const neighborhoodFiles = new Set<string>();
+  for (const neighborhood of ingestion.neighborhoods) {
+    if (!neighborhoodIds.has(neighborhood.id)) continue;
+    for (const file of neighborhood.files) neighborhoodFiles.add(file);
+    for (const file of neighborhood.seedFiles) neighborhoodFiles.add(file);
+  }
+
+  const focused = ingestion.sourceFiles.filter(
+    (file) => directPaths.has(file.relativePath) || neighborhoodFiles.has(file.relativePath)
+  );
+
+  if (focused.length > 0) {
+    return focused.slice(0, 16);
+  }
+
+  return ingestion.sourceFiles.slice(0, 12);
+}
+
+function focusedNeighborhoodSummaries(
+  ingestion: IngestionResult | undefined,
+  report: AuditReport
+): string[] {
+  if (!ingestion) return [];
+  const primaryCandidate = primaryCandidateFromReport(report);
+  const ids = new Set(primaryCandidate?.neighborhoodIds ?? []);
+  return ingestion.neighborhoods
+    .filter((neighborhood) => ids.has(neighborhood.id))
+    .slice(0, 4)
+    .map((neighborhood) => neighborhood.summary);
+}
+
+function buildFocusedReviewContext(
+  ingestion: IngestionResult | undefined,
+  report: AuditReport
+): string {
+  if (!ingestion) {
+    return "[No source code was available for independent review verification.]";
+  }
+
+  const sections: string[] = [];
+  const neighborhoodSummaries = focusedNeighborhoodSummaries(ingestion, report);
+  if (neighborhoodSummaries.length > 0) {
+    sections.push("=== FOCUSED REVIEW NEIGHBORHOODS ===");
+    sections.push(neighborhoodSummaries.join("\n\n"));
+    sections.push("");
+  }
+
+  sections.push(buildSourceFileContext(focusedReviewFiles(ingestion, report), "FOCUSED REVIEW FILES"));
+  return sections.join("\n");
+}
+
+function detectFrameworkProtections(
+  category: TargetCategory,
+  files: SourceFile[]
+): string[] {
+  const protections: string[] = [];
+  const addProtection = (value: string) => {
+    if (!protections.includes(value)) {
+      protections.push(value);
+    }
+  };
+
+  for (const file of files) {
+    const content = file.content;
+    if (category === "solidity_evm") {
+      if (/\bReentrancyGuard\b|\bnonReentrant\b/.test(content)) {
+        addProtection(`${file.relativePath}: reentrancy guard detected`);
+      }
+      if (/\bSafeERC20\b|\.safeTransfer\b|\.safeTransferFrom\b/.test(content)) {
+        addProtection(`${file.relativePath}: SafeERC20-style token handling detected`);
+      }
+      if (/\bonlyOwner\b|\bonlyRole\b|\bAccessControl\b/.test(content)) {
+        addProtection(`${file.relativePath}: explicit access-control guard detected`);
+      }
+      if (/\binitializer\b|\breinitializer\b|\bInitializable\b/.test(content)) {
+        addProtection(`${file.relativePath}: initializer protection detected`);
+      }
+      if (/\b_authorizeUpgrade\b|\bUUPSUpgradeable\b/.test(content)) {
+        addProtection(`${file.relativePath}: upgrade authorization hook detected`);
+      }
+      if (/\bwhenNotPaused\b|\bPausable\b/.test(content)) {
+        addProtection(`${file.relativePath}: pause control detected`);
+      }
+    } else if (category === "solana_rust") {
+      if (/Signer<'info>|#\s*\[\s*account\s*\([^\]]*signer/.test(content)) {
+        addProtection(`${file.relativePath}: signer constraint detected`);
+      }
+      if (/\bhas_one\s*=|\bconstraint\s*=/.test(content)) {
+        addProtection(`${file.relativePath}: explicit Anchor account constraint detected`);
+      }
+      if (/\bowner\s*=/.test(content)) {
+        addProtection(`${file.relativePath}: Anchor owner constraint detected`);
+      }
+      if (/Program<'info>|\bProgram\s*<\s*'info/.test(content)) {
+        addProtection(`${file.relativePath}: typed Program account validation detected`);
+      }
+      if (/\bfind_program_address\b/.test(content)) {
+        addProtection(`${file.relativePath}: canonical PDA derivation helper detected`);
+      }
+      if (/Account<'info>/.test(content)) {
+        addProtection(`${file.relativePath}: typed account wrapper detected`);
+      }
+    }
+  }
+
+  return protections.slice(0, 10);
+}
+
+function buildReviewClaimSummary(report: AuditReport): string {
+  const primaryCandidate = primaryCandidateFromReport(report);
+  const topTraces = report.evidence.traces
+    .slice(0, 3)
+    .map(
+      (trace) =>
+        `${trace.vulnerabilityClass} at ${trace.file}:${trace.line} - ${trace.finding}`
+    );
+
+  return [
+    `Title: ${report.title}`,
+    `Severity: ${report.severity}`,
+    `Proof state: ${report.evidence.proofLevel}`,
+    `Evidence summary: ${report.evidence.summary}`,
+    primaryCandidate ? `Origin: ${primaryCandidate.origin}` : "",
+    primaryCandidate?.originNotes?.length
+      ? `Origin notes: ${primaryCandidate.originNotes.join(" | ")}`
+      : "",
+    report.whyFlagged.length > 0
+      ? `Why flagged: ${report.whyFlagged.slice(0, 3).join(" | ")}`
+      : "",
+    report.affectedSurface?.length
+      ? `Affected surface: ${report.affectedSurface.slice(0, 6).join(", ")}`
+      : "",
+    topTraces.length > 0 ? `Traces:\n- ${topTraces.join("\n- ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function defaultCounterEvidenceAssessment(
+  detectedProtections: string[]
+): CounterEvidenceAssessment {
+  return {
+    counterEvidence: [],
+    survivingRisks: [],
+    protections: detectedProtections.slice(0, 6),
+    reachability: "uncertain",
+    confidence: 0.4,
+  };
+}
+
+function sanitizeReachability(
+  value: unknown,
+  fallback: CounterEvidenceAssessment["reachability"]
+): CounterEvidenceAssessment["reachability"] {
+  return value === "blocked" || value === "reachable" || value === "uncertain"
+    ? value
+    : fallback;
+}
+
+function applyCounterEvidencePolicy(
+  report: AuditReport,
+  verdict: ReviewerVerdict,
+  assessment: CounterEvidenceAssessment
+): ReviewerVerdict {
+  const blockedByProtections =
+    assessment.reachability === "blocked" && assessment.confidence >= 0.7;
+  const uncertainWithProtections =
+    assessment.reachability === "uncertain" &&
+    assessment.protections.length > 0 &&
+    assessment.confidence >= 0.55;
+
+  if (blockedByProtections) {
+    return {
+      verdict: "discard",
+      rationale: `${verdict.rationale} Independent review found blocking counter-evidence or framework protections that appear to close the exploit path: ${assessment.counterEvidence.slice(0, 2).join(" | ") || assessment.protections.slice(0, 2).join(" | ")}.`.trim(),
+      confidence: Math.min(verdict.confidence, 0.3),
+    };
+  }
+
+  if (
+    verdict.verdict === "publish" &&
+    uncertainWithProtections &&
+    report.evidence.proofLevel !== "validated_replay" &&
+    report.evidence.proofLevel !== "executed_poc"
+  ) {
+    return {
+      verdict: "needs_human_review",
+      rationale: `${verdict.rationale} Independent review found meaningful protections or uncertainty that prevent confident auto-publication: ${assessment.protections.slice(0, 2).join(" | ") || assessment.counterEvidence.slice(0, 2).join(" | ")}.`.trim(),
+      confidence: Math.min(verdict.confidence, 0.6),
+    };
+  }
+
+  return verdict;
+}
+
 export async function runAudit(
   runtime: IAgentRuntime,
   opts: {
@@ -1712,19 +1963,104 @@ export async function runReview(
   };
 
   const codeContext = ingestion
-    ? buildCodeContext(ingestion)
+    ? buildFocusedReviewContext(ingestion, report)
     : "[No source code was available for independent review verification.]";
+  const focusedFiles = focusedReviewFiles(ingestion, report);
+  const claimSummary = buildReviewClaimSummary(report);
+  const detectedProtections = detectFrameworkProtections(category, focusedFiles);
 
   let reviewAnalysisContext = "";
   if (category === "solana_rust" && ingestion && hasCode) {
-    reviewAnalysisContext = formatSignalsForPrompt(analyzeSolanaRust(ingestion.sourceFiles));
+    reviewAnalysisContext = formatSignalsForPrompt(analyzeSolanaRust(focusedFiles));
   } else if (category === "solidity_evm" && ingestion && hasCode) {
-    reviewAnalysisContext = formatEvmSignalsForPrompt(analyzeSolidityEvm(ingestion.sourceFiles));
+    reviewAnalysisContext = formatEvmSignalsForPrompt(analyzeSolidityEvm(focusedFiles));
   }
 
   try {
+    const counterEvidenceFallback = defaultCounterEvidenceAssessment(detectedProtections);
+    let counterEvidenceAssessment = counterEvidenceFallback;
+
+    const counterPromptParts: string[] = [
+      "You are an adversarial security reviewer.",
+      "Your first job is to DISPROVE the claim before thinking about publication.",
+      "Search for disconfirming evidence, framework protections, unreachable assumptions, or semantics that neutralize the exploit path.",
+      "Do not restate the auditor's narrative. Focus on what blocks or weakens the claim.",
+      "",
+      `Category: ${category}`,
+      `Target: ${JSON.stringify({ targetId: target.targetId, type: target.type, displayName: target.displayName })}`,
+      scopeContext ? `ScopeContext: ${JSON.stringify(scopeContext)}` : "",
+      "",
+      "=== CLAIM SUMMARY ===",
+      claimSummary,
+      "",
+      detectedProtections.length > 0
+        ? `=== DETERMINISTIC PROTECTIONS DETECTED ===\n- ${detectedProtections.join("\n- ")}`
+        : "=== DETERMINISTIC PROTECTIONS DETECTED ===\n- none",
+      "",
+    ];
+
+    if (reviewAnalysisContext) {
+      counterPromptParts.push(
+        "=== INDEPENDENT STATIC ANALYSIS (for counter-checking) ===",
+        reviewAnalysisContext,
+        ""
+      );
+    }
+
+    counterPromptParts.push(
+      codeContext,
+      "",
+      "Return STRICT JSON:",
+      "{ counterEvidence: string[], survivingRisks: string[], protections: string[], reachability: 'blocked'|'uncertain'|'reachable', confidence: number }",
+      "- Use 'blocked' when guards, ownership checks, standard protections, or framework semantics appear to close the exploit path",
+      "- Use 'uncertain' when the claim may survive but important reachability or mitigation questions remain",
+      "- Use 'reachable' only when the focused code still appears exploitable after you searched for counter-evidence"
+    );
+
+    const counterResult = await (runtime as any).useModel?.(ModelType.TEXT_LARGE, {
+      prompt: counterPromptParts.filter(Boolean).join("\n"),
+      maxTokens: 900,
+    });
+    const counterText =
+      typeof counterResult === "string" ? counterResult : counterResult?.text ?? "";
+    const counterJsonStart = counterText.indexOf("{");
+    const counterJsonEnd = counterText.lastIndexOf("}");
+
+    if (counterJsonStart >= 0 && counterJsonEnd > counterJsonStart) {
+      const parsedCounter = JSON.parse(
+        counterText.slice(counterJsonStart, counterJsonEnd + 1)
+      ) as Record<string, unknown>;
+      counterEvidenceAssessment = {
+        counterEvidence: uniqueStrings(
+          Array.isArray(parsedCounter.counterEvidence)
+            ? parsedCounter.counterEvidence.map((value) => String(value))
+            : counterEvidenceFallback.counterEvidence
+        ),
+        survivingRisks: uniqueStrings(
+          Array.isArray(parsedCounter.survivingRisks)
+            ? parsedCounter.survivingRisks.map((value) => String(value))
+            : counterEvidenceFallback.survivingRisks
+        ),
+        protections: uniqueStrings([
+          ...detectedProtections,
+          ...(Array.isArray(parsedCounter.protections)
+            ? parsedCounter.protections.map((value) => String(value))
+            : []),
+        ]),
+        reachability: sanitizeReachability(
+          parsedCounter.reachability,
+          counterEvidenceFallback.reachability
+        ),
+        confidence: sanitizeConfidence(
+          parsedCounter.confidence,
+          counterEvidenceFallback.confidence
+        ),
+      };
+    }
+
     const promptParts: string[] = [
-      "You are an adversarial security reviewer whose job is to DISPROVE reported vulnerabilities.",
+      "You are an independent security reviewer deciding whether a candidate finding survives adversarial scrutiny.",
+      "Use the counter-evidence assessment first. If protections appear to block the path, do not publish just because the auditor sounded confident.",
       "You should be STRICT for critical and high severity findings, and more tolerant for medium and low.",
       "You can return one of three dispositions:",
       "- publish: the finding is grounded and strong enough for the main gallery",
@@ -1735,7 +2071,7 @@ export async function runReview(
 
     if (hasCode) {
       promptParts.push(
-        "You have access to the actual source code. Verify the finding against the real code. Look for:"
+        "You have focused source code context. Verify the finding against the real code. Look for:"
       );
     } else {
       promptParts.push(
@@ -1779,14 +2115,19 @@ export async function runReview(
       `Category: ${category}`,
       `Target: ${JSON.stringify({ targetId: target.targetId, type: target.type, displayName: target.displayName })}`,
       scopeContext ? `ScopeContext: ${JSON.stringify(scopeContext)}` : "",
-      `Report: ${JSON.stringify(report)}`,
+      "",
+      "=== CLAIM SUMMARY ===",
+      claimSummary,
+      "",
+      "=== COUNTER-EVIDENCE ASSESSMENT ===",
+      JSON.stringify(counterEvidenceAssessment, null, 2),
       ""
     );
 
-    if (reviewAnalysisContext) {
+    if (detectedProtections.length > 0) {
       promptParts.push(
-        "=== INDEPENDENT STATIC ANALYSIS (for cross-reference) ===",
-        reviewAnalysisContext,
+        "=== DETERMINISTIC PROTECTIONS DETECTED ===",
+        `- ${detectedProtections.join("\n- ")}`,
         ""
       );
     }
@@ -1796,6 +2137,8 @@ export async function runReview(
       "",
       "Return STRICT JSON: { verdict: 'publish'|'needs_human_review'|'discard', rationale: string, confidence: number }",
       "- confidence is 0.0 to 1.0 where 1.0 means the finding is certainly valid",
+      "- Start from the counter-evidence assessment rather than from the auditor's framing",
+      "- If protections or semantics appear to block the exploit path, prefer discard or needs_human_review over publish",
       "- For critical/high: only publish when replayable proof exists and confidence is very strong (> 0.78); otherwise prefer needs_human_review over publish",
       "- For medium/low: publish only when the code-path evidence is grounded and confidence is solid (> 0.55)",
       "- If the finding looks grounded but still uncertain, use needs_human_review instead of discard"
@@ -1822,11 +2165,16 @@ export async function runReview(
           : parsed.verdict === "needs_human_review"
             ? "needs_human_review"
             : "publish";
-      return enforceReviewPolicy(report, {
+      const reviewed = applyCounterEvidencePolicy(
+        report,
+        {
         verdict: parsedVerdict,
         rationale: String(parsed.rationale ?? fallback.rationale),
         confidence: sanitizeConfidence(parsed.confidence, fallback.confidence),
-      });
+        },
+        counterEvidenceAssessment
+      );
+      return enforceReviewPolicy(report, reviewed);
     }
   } catch (e) {
     logger.warn(`[Review] LLM review failed, falling back to default verdict: ${e}`);

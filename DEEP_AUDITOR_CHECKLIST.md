@@ -100,10 +100,10 @@ Done when:
 
 ## 8. Reviewer Independence
 
-- [ ] Make the reviewer search for disconfirming evidence first
-- [ ] Reduce framing leakage from the auditor into the reviewer
-- [ ] Add checks for standard library/framework protections before verdict
-- [ ] Preserve grounded-but-uncertain findings in review without auto-publishing them
+- [x] Make the reviewer search for disconfirming evidence first
+- [x] Reduce framing leakage from the auditor into the reviewer
+- [x] Add checks for standard library/framework protections before verdict
+- [x] Preserve grounded-but-uncertain findings in review without auto-publishing them
 
 Done when:
 
@@ -150,8 +150,8 @@ This is the recommended implementation order:
 
 Start with:
 
-- begin separating reviewer judgment from auditor framing now that multiple findings are preserved
 - upgrade draft exploit templates into more target-specific proof artifacts
 - surface multi-candidate provenance and downgrade reasons more clearly in the UI
+- rerun the controlled demo targets with the stronger reviewer before recording final submission material
 
 Those three changes unlock the next credibility jump.

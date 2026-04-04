@@ -93,6 +93,7 @@ The following important local/source changes were reconciled:
 - Live GitHub ingestion validation now succeeds against both primary demo repos through the real ingestion pipeline, including clean clone / cleanup behavior outside sandbox constraints
 - Evidence labels are now honest end-to-end: analyzer-generated exploit harnesses surface as `template_only`, draft replay artifacts as `guided_replay`, and high/critical findings no longer clear the evidence bar unless stronger validation exists
 - The audit engine now runs an exploratory repo-index pass before final synthesis, merges exploration-seeded candidates with analyzer-seeded candidates, and tracks candidate provenance as `analyzer`, `exploration`, or `analyzer+exploration`
+- The reviewer now runs a counter-evidence-first pass on focused code neighborhoods, trims auditor framing down to a structured claim summary, detects standard framework protections deterministically, and can override overconfident reviewer verdicts when blocking protections are found
 
 ### Important note about earlier failures
 
@@ -667,9 +668,9 @@ If continuing in a new thread, start here:
 
 That work should prioritize:
 
-- increasing reviewer independence now that multi-finding output is preserved
 - upgrading target-specific PoC generation so more findings rise above `template_only`
 - surfacing finding provenance and downgrade reasons more clearly in the UI once reviewer behavior is stronger
+- rerunning the controlled demo targets with the stronger reviewer before final demo recording
 
 After the pivot reaches a believable multi-finding state, move into:
 
