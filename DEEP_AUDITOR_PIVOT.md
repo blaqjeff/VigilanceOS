@@ -66,6 +66,7 @@ flowchart TD
 - The analyzers currently decide too much of what the model sees as important.
 - A missed file or missed signal can become a missed finding.
 - We now preserve multiple candidate findings, but they are still too analyzer-seeded and not exploratory enough.
+- Proof labels are now more honest, but most current exploit artifacts are still draft templates rather than validated replays.
 
 ## 3. Why The Current Version Was Built This Way
 

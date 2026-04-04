@@ -409,7 +409,41 @@ function buildImpact(topSignal?: AnalyzerSignal): string {
 }
 
 function hasSubstantialPocText(poc?: AuditReport["poc"]): boolean {
-  return Boolean(poc?.text && poc.text.trim().length >= 120 && poc.framework !== "generic");
+  return Boolean(poc?.text && poc.text.trim().length >= 120);
+}
+
+function normalizedPocText(poc?: AuditReport["poc"]): string {
+  return poc?.text?.trim().toLowerCase() ?? "";
+}
+
+function looksLikeTemplatePoc(poc?: AuditReport["poc"]): boolean {
+  const text = normalizedPocText(poc);
+  if (!text) return false;
+
+  return (
+    /(^|\W)todo(\W|$)/.test(text) ||
+    text.includes("poc skeleton") ||
+    text.includes("implement against target") ||
+    text.includes("replace with actual") ||
+    text.includes("adapt the instruction") ||
+    text.includes("adapt the target") ||
+    text.includes("import the target contract") ||
+    text.includes("import the target program") ||
+    text.includes("declare target contract") ||
+    text.includes("declare target program") ||
+    text.includes("mocked multi-candidate response")
+  );
+}
+
+function hasVerificationMarker(
+  poc: AuditReport["poc"],
+  marker: "validated_replay" | "executed_poc"
+): boolean {
+  return normalizedPocText(poc).includes(`[evidence:${marker}]`);
+}
+
+function hasConcreteReplayArtifact(poc?: AuditReport["poc"]): boolean {
+  return hasSubstantialPocText(poc) && !looksLikeTemplatePoc(poc);
 }
 
 function buildReproductionGuide(
@@ -420,16 +454,29 @@ function buildReproductionGuide(
 ): EvidenceBundle["reproduction"] {
   const topSignal = signals[0];
 
-  if (hasSubstantialPocText(poc) && poc) {
+  if (hasConcreteReplayArtifact(poc) && poc) {
     return {
       available: true,
-      framework: poc.framework,
+      framework: poc.framework !== "generic" ? poc.framework : undefined,
       steps: [
         `Materialize ${target.displayName} locally or on a disposable fork/test validator.`,
-        `Run the ${poc.framework} PoC and drive execution through ${topSignal ? `${topSignal.file}:${topSignal.line}` : "the flagged code path"}.`,
+        `Run the draft replay artifact and drive execution through ${topSignal ? `${topSignal.file}:${topSignal.line}` : "the flagged code path"}.`,
         `Confirm the unauthorized state change or value extraction described in the report.`,
       ],
-      notes: "The included PoC should be treated as replayable guidance and validated against the exact target revision.",
+      notes: "The included artifact looks replay-oriented, but it has not been validated or executed against the exact target revision yet.",
+    };
+  }
+
+  if (looksLikeTemplatePoc(poc) && poc?.text) {
+    return {
+      available: true,
+      framework: poc.framework !== "generic" ? poc.framework : undefined,
+      steps: [
+        `Replace the TODO placeholders in the draft ${poc.framework} harness with real imports, addresses, accounts, and function names from ${target.displayName}.`,
+        `Bind the harness to ${topSignal ? `${topSignal.file}:${topSignal.line}` : "the flagged code path"} and run it locally.`,
+        "Convert the draft harness into a validated replay before treating it as publishable proof.",
+      ],
+      notes: "A target-adaptation template exists, but it is still a draft rather than validated exploit evidence.",
     };
   }
 
@@ -458,7 +505,7 @@ function isReplayableGuide(
   reproduction: EvidenceBundle["reproduction"],
   poc: AuditReport["poc"]
 ): boolean {
-  if (!reproduction.available || reproduction.steps.length === 0 || hasSubstantialPocText(poc)) {
+  if (!reproduction.available || reproduction.steps.length === 0 || looksLikeTemplatePoc(poc)) {
     return false;
   }
 
@@ -490,18 +537,26 @@ function buildEvidenceBundle(
   }));
 
   const reproduction = buildReproductionGuide(target, severity, poc, signals);
-  const proofLevel = hasSubstantialPocText(poc)
-    ? "runnable_poc"
-    : isReplayableGuide(reproduction, poc)
-      ? "guided_replay"
-      : traces.length > 0
-        ? "code_path"
-        : "context_only";
+  const hasGroundedCodePath = traces.length > 0;
+  const proofLevel = hasVerificationMarker(poc, "executed_poc")
+    ? "executed_poc"
+    : hasVerificationMarker(poc, "validated_replay")
+      ? "validated_replay"
+      : hasConcreteReplayArtifact(poc) || isReplayableGuide(reproduction, poc)
+        ? "guided_replay"
+        : looksLikeTemplatePoc(poc)
+          ? "template_only"
+          : hasGroundedCodePath
+            ? "code_path"
+            : "context_only";
 
   const meetsSeverityBar =
     severityRank(severity) >= severityRank("high")
-      ? proofLevel === "runnable_poc" || proofLevel === "guided_replay"
-      : proofLevel !== "context_only";
+      ? proofLevel === "validated_replay" || proofLevel === "executed_poc"
+      : hasGroundedCodePath ||
+        proofLevel === "guided_replay" ||
+        proofLevel === "validated_replay" ||
+        proofLevel === "executed_poc";
 
   const artifacts: EvidenceArtifact[] = [];
   if (traces.length > 0) {
@@ -516,14 +571,21 @@ function buildEvidenceBundle(
     artifacts.push({
       type: "poc",
       label: `${poc.framework} reproduction artifact`,
-      description: hasSubstantialPocText(poc)
-        ? "PoC text is substantial enough to support replay-oriented validation."
-        : "PoC text exists, but still needs expansion before it should be treated as strong proof.",
+      description:
+        proofLevel === "executed_poc"
+          ? "The artifact is marked as executed proof."
+          : proofLevel === "validated_replay"
+            ? "The artifact is marked as a validated replay."
+            : proofLevel === "guided_replay"
+              ? "The artifact looks replay-oriented, but it is still unvalidated guidance."
+              : proofLevel === "template_only"
+                ? "The artifact is a draft template with placeholders and must not be treated as validated proof."
+                : "A PoC artifact exists, but it is not strong enough to upgrade the finding beyond code-path evidence.",
     });
   }
 
-  const summary = traces.length > 0
-    ? `${friendlyVulnerabilityClass(traces[0].vulnerabilityClass)} backed by ${traces.length} grounded trace${traces.length === 1 ? "" : "s"} and ${proofLevel.replace(/_/g, " ")} evidence.`
+  const summary = hasGroundedCodePath
+    ? `${friendlyVulnerabilityClass(traces[0].vulnerabilityClass)} backed by ${traces.length} grounded trace${traces.length === 1 ? "" : "s"} with ${proofLevel.replace(/_/g, " ")} proof state.`
     : `Finding currently rests on ${proofLevel.replace(/_/g, " ")} evidence only.`;
 
   return {
@@ -538,14 +600,18 @@ function buildEvidenceBundle(
 
 function defaultConfidenceForEvidence(evidence: EvidenceBundle): number {
   switch (evidence.proofLevel) {
-    case "runnable_poc":
-      return 0.78;
+    case "executed_poc":
+      return 0.86;
+    case "validated_replay":
+      return 0.74;
     case "guided_replay":
-      return 0.64;
+      return 0.6;
+    case "template_only":
+      return 0.38;
     case "code_path":
       return 0.48;
     default:
-      return 0.3;
+      return 0.25;
   }
 }
 
@@ -680,11 +746,15 @@ function reportFromPrimaryCandidate(
 
 function proofRank(proofLevel: EvidenceBundle["proofLevel"]): number {
   switch (proofLevel) {
-    case "runnable_poc":
-      return 4;
+    case "executed_poc":
+      return 6;
+    case "validated_replay":
+      return 5;
     case "guided_replay":
-      return 3;
+      return 4;
     case "code_path":
+      return 3;
+    case "template_only":
       return 2;
     default:
       return 1;
@@ -912,7 +982,11 @@ function enforceReviewPolicy(
 ): ReviewerVerdict {
   const thresholds = reviewThresholds(report.severity);
   const proofLabel = report.evidence.proofLevel.replace(/_/g, " ");
-  const hasGroundedEvidence = report.evidence.proofLevel !== "context_only";
+  const hasGroundedEvidence =
+    report.evidence.traces.length > 0 ||
+    report.evidence.proofLevel === "guided_replay" ||
+    report.evidence.proofLevel === "validated_replay" ||
+    report.evidence.proofLevel === "executed_poc";
 
   if (!hasGroundedEvidence) {
     return {

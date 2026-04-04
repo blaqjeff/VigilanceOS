@@ -14,8 +14,10 @@ export type Target = {
 };
 
 export type EvidenceProofLevel =
-  | "runnable_poc"
+  | "executed_poc"
+  | "validated_replay"
   | "guided_replay"
+  | "template_only"
   | "code_path"
   | "context_only";
 

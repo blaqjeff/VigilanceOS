@@ -91,6 +91,7 @@ The following important local/source changes were reconciled:
 - Legacy Eliza memory persistence can still fail in this environment, but those writes are now non-fatal and no longer break canonical job creation
 - The deep-auditor pivot now includes repo indexing, security-neighborhood retrieval, and ranked multi-candidate audit output stored on `report.candidateFindings`
 - Live GitHub ingestion validation now succeeds against both primary demo repos through the real ingestion pipeline, including clean clone / cleanup behavior outside sandbox constraints
+- Evidence labels are now honest end-to-end: analyzer-generated exploit harnesses surface as `template_only`, draft replay artifacts as `guided_replay`, and high/critical findings no longer clear the evidence bar unless stronger validation exists
 
 ### Important note about earlier failures
 
@@ -665,9 +666,9 @@ If continuing in a new thread, start here:
 
 That work should prioritize:
 
-- tightening evidence honesty before further demo claims
 - adding exploratory discovery beyond analyzer-seeded neighborhoods
 - increasing reviewer independence now that multi-finding output is preserved
+- surfacing finding provenance once exploratory candidates exist
 
 After the pivot reaches a believable multi-finding state, move into:
 

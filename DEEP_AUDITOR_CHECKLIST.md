@@ -74,14 +74,14 @@ Done when:
 
 ## 6. Evidence Honesty
 
-- [ ] Replace optimistic proof labeling with honest states
-- [ ] Introduce explicit proof states such as:
+- [x] Replace optimistic proof labeling with honest states
+- [x] Introduce explicit proof states such as:
   - `template_only`
   - `guided_replay`
   - `validated_replay`
   - `executed_poc`
-- [ ] Stop treating long template text as runnable proof
-- [ ] Update UI labels to reflect the new evidence states
+- [x] Stop treating long template text as runnable proof
+- [x] Update UI labels to reflect the new evidence states
 
 Done when:
 
@@ -150,8 +150,8 @@ This is the recommended implementation order:
 
 Start with:
 
-- make evidence labels honest so preserved candidates are not overstated
 - add exploratory discovery beyond analyzer-seeded neighborhoods
 - begin separating reviewer judgment from auditor framing now that multiple findings are preserved
+- start surfacing exploratory-vs-analyzer provenance once those candidates exist
 
 Those three changes unlock the next credibility jump.

@@ -1,8 +1,9 @@
 /**
  * Solana / Anchor PoC Template Generator
  *
- * Generates runnable (or near-runnable) Anchor test harnesses
- * based on the vulnerability class and analysis signals.
+ * Generates draft Anchor exploit-harness templates that still require
+ * target-specific wiring and validation before they should be treated
+ * as replayable proof.
  */
 
 import type { VulnClass, AnalysisSignal, SolanaAnalysisResult } from "./solana.js";

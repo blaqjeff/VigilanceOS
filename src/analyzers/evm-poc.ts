@@ -1,8 +1,9 @@
 /**
  * Solidity / EVM PoC Template Generator
  *
- * Generates runnable (or near-runnable) Foundry test harnesses
- * based on the vulnerability class and analysis signals.
+ * Generates draft Foundry exploit-harness templates that still require
+ * target-specific wiring and validation before they should be treated
+ * as replayable proof.
  */
 
 import type { EvmVulnClass, EvmSignal, EvmAnalysisResult } from "./evm.js";

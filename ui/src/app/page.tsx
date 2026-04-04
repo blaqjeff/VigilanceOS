@@ -25,8 +25,10 @@ type Target = {
 };
 
 type EvidenceProofLevel =
-  | "runnable_poc"
+  | "executed_poc"
+  | "validated_replay"
   | "guided_replay"
+  | "template_only"
   | "code_path"
   | "context_only";
 
@@ -242,10 +244,14 @@ function severityTone(severity: string): string {
 
 function proofTone(proofLevel: EvidenceProofLevel): string {
   switch (proofLevel) {
-    case "runnable_poc":
+    case "executed_poc":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "validated_replay":
+      return "border-teal-400/30 bg-teal-400/10 text-teal-300";
     case "guided_replay":
       return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
+    case "template_only":
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
     case "code_path":
       return "border-amber-500/30 bg-amber-500/10 text-amber-300";
     default:
@@ -264,7 +270,20 @@ function confidenceTone(confidence: number): string {
 }
 
 function proofLabel(proofLevel: EvidenceProofLevel): string {
-  return proofLevel.replace(/_/g, " ");
+  switch (proofLevel) {
+    case "executed_poc":
+      return "executed poc";
+    case "validated_replay":
+      return "validated replay";
+    case "guided_replay":
+      return "guided replay";
+    case "template_only":
+      return "template only";
+    case "code_path":
+      return "code path";
+    default:
+      return "context only";
+  }
 }
 
 function formatPercent(value: number): string {
