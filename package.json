@@ -6,7 +6,7 @@
   "scripts": {
     "start:eliza": "npm run build:backend && node ./scripts/run-eliza.mjs start",
     "dev:eliza": "npm run build:backend && node ./scripts/run-eliza.mjs dev",
-    "dev:ui": "npm --prefix ui run start",
+    "dev:ui": "npm --prefix ui run dev",
     "start:ui": "npm --prefix ui run start",
     "dev": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/run-stack.ps1 -Mode dev",
     "start": "concurrently -n backend,ui -c blue,magenta \"npm run start:eliza\" \"npm run start:ui\"",

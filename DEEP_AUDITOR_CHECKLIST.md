@@ -122,6 +122,10 @@ Done when:
 
 ## 10. Demo Hardening
 
+- [x] Expose custom GitHub/local target intake clearly in the operator UI so demo runs do not depend on direct API submission
+- [x] Refresh model readiness live instead of relying on a stale boot-time snapshot
+- [x] Launch audits asynchronously from the backend so long-running jobs do not depend on a single held-open request
+- [x] Suppress paired `secure` reference examples from dominating controlled Solana demo targets
 - [ ] Rerun the controlled Solana demo target with the new multi-finding path
 - [ ] Rerun the controlled EVM demo target with the new multi-finding path
 - [ ] Capture one or two findings that clearly show grounded reasoning and honest evidence labels

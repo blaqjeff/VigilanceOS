@@ -61,14 +61,6 @@ if ($Mode -eq 'stop') {
 Stop-PortProcesses $ports | Out-Null
 Start-Sleep -Seconds 2
 
-if ($Mode -eq 'dev') {
-  & npm run build:backend
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-  & npm run build:ui
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
-
 $backendLog = "backend-$Mode.log"
 $uiLog = "ui-$Mode.log"
 
@@ -85,7 +77,11 @@ $backendCommand = if ($Mode -eq 'start') {
   "npm run dev:eliza *> $backendLog"
 }
 
-$uiCommand = "npm --prefix ui run start *> $uiLog"
+$uiCommand = if ($Mode -eq 'start') {
+  "npm --prefix ui run start *> $uiLog"
+} else {
+  "npm --prefix ui run dev *> $uiLog"
+}
 
 $backendProc = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoLogo', '-NoProfile', '-Command', $backendCommand -WorkingDirectory $root -PassThru
 $uiProc = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoLogo', '-NoProfile', '-Command', $uiCommand -WorkingDirectory $root -PassThru

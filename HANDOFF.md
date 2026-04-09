@@ -98,6 +98,12 @@ The following important local/source changes were reconciled:
 - Local replay-generation probes against `sealevel-attacks` and `damn-vulnerable-defi-shallow` now produce repo-anchored `guided_replay` artifacts that avoid the template detector while still remaining honestly unvalidated
 - The old class-template generators (`src/analyzers/solana-poc.ts` and `src/analyzers/evm-poc.ts`) are no longer part of the active path and have been removed to keep the repo aligned with the guided-replay architecture
 - The operator console now surfaces ranked candidate findings inside the job-detail modal, shows discovery provenance (`analyzer`, `exploration`, `analyzer+exploration`), displays candidate counts on finding cards, and explains publish / human-review / discard outcomes through explicit outcome-driver summaries instead of relying on implicit reviewer text alone
+- The operator-facing intake UX is restored again: the UI now exposes explicit `GitHub Repo`, `Local Folder`, and `Immunefi Project` modes with mode-specific validation and demo presets, while backend target parsing still accepts plain `owner/repo` input and absolute local-folder paths
+- Telegram HITL is re-enabled in the local environment; readiness now reports Telegram as `ready` and backend startup logs show the Telegram bot plugin starting again
+- The Scout UI is now explicitly labeled as project-level discovery only; it should not be presented as asset-level Immunefi scope expansion until the watcher can explode per-project assets/docs/repos properly
+- Model readiness is no longer boot-time-only: `src/readiness.ts` and `src/plugins/plugin-ui-bridge/index.ts` now refresh the model probe live for the readiness panel and again right before audits start
+- Audit launch is now asynchronous at the backend, so `/vigilance/audit` accepts the job quickly and the scan/review lifecycle continues in the background instead of holding one request open through the whole run
+- Controlled Solana demo suppression is stronger now: paired `secure` reference examples are filtered out of ranked candidates for repos like `sealevel-attacks`, and opposite `secure` / `insecure` variants no longer merge into the same finding during dedupe
 
 ### Important note about earlier failures
 

@@ -203,9 +203,128 @@ type ScoutWatcherSnapshot = {
   recentDiscoveries: ScoutDiscovery[];
 };
 
+type IntakeMode = "github" | "local" | "immunefi";
+
+const INTAKE_MODE_ORDER: IntakeMode[] = ["github", "local", "immunefi"];
+
+const INTAKE_MODE_COPY: Record<
+  IntakeMode,
+  {
+    label: string;
+    placeholder: string;
+    helper: string;
+    detail: string;
+  }
+> = {
+  github: {
+    label: "GitHub Repo",
+    placeholder: "github.com/org/repo or owner/repo",
+    helper:
+      "Best path for the hosted demo and public repos. The backend clones the repo directly.",
+    detail:
+      "Use this for the cleanest end-to-end operator flow during recording and on Nosana.",
+  },
+  local: {
+    label: "Local Folder",
+    placeholder: "C:\\VigilanceOS\\.demo-targets\\sealevel-attacks",
+    helper:
+      "Best demo path for controlled repos you already have on disk. The local backend reads the folder directly.",
+    detail:
+      "Use an absolute path only. This mode is for same-machine runs, not remote hosted uploads.",
+  },
+  immunefi: {
+    label: "Immunefi Project",
+    placeholder: "rootstocklabs",
+    helper:
+      "Queues an Immunefi project identifier directly when you want to test project-level intake without relying on Scout refresh timing.",
+    detail:
+      "Current Scout/Immunefi flow is still project-level. It does not yet explode every asset, repo, or document into separate queued targets.",
+  },
+};
+
+const INTAKE_PRESETS: Array<{
+  mode: IntakeMode;
+  label: string;
+  value: string;
+}> = [
+  {
+    mode: "github",
+    label: "EVM demo repo",
+    value: "theredguild/damn-vulnerable-defi",
+  },
+  {
+    mode: "local",
+    label: "Solana demo folder",
+    value: "C:\\VigilanceOS\\.demo-targets\\sealevel-attacks",
+  },
+  {
+    mode: "local",
+    label: "EVM local folder",
+    value: "C:\\VigilanceOS\\.demo-targets\\damn-vulnerable-defi-shallow",
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function isAbsoluteLocalPath(value: string): boolean {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("\\") ||
+    /^[a-zA-Z]:[/\\]/.test(value)
+  );
+}
+
+function normalizeTargetInput(mode: IntakeMode, value: string): string {
+  const trimmed = value.trim();
+  if (mode !== "github") {
+    return trimmed;
+  }
+
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith("github.com/")) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith("https://github.com/")) {
+    return trimmed.replace(/^https:\/\//, "");
+  }
+
+  if (trimmed.startsWith("http://github.com/")) {
+    return trimmed.replace(/^http:\/\//, "");
+  }
+
+  return trimmed;
+}
+
+function validateTargetInput(mode: IntakeMode, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "Enter a target before queueing it.";
+  }
+
+  if (mode === "local" && !isAbsoluteLocalPath(trimmed)) {
+    return "Local folder mode requires an absolute path on this machine.";
+  }
+
+  if (
+    mode === "github" &&
+    !(
+      /^[\w.-]+\/[\w.-]+$/.test(trimmed) ||
+      trimmed.startsWith("github.com/") ||
+      trimmed.startsWith("https://github.com/") ||
+      trimmed.startsWith("http://github.com/")
+    )
+  ) {
+    return "GitHub mode expects owner/repo or a github.com repo URL.";
+  }
+
+  return null;
+}
 
 function readinessTone(state?: string): string {
   switch (state) {
@@ -1147,6 +1266,7 @@ function ScoutCategoryCard({
 
 export default function Home() {
   const [target, setTarget] = React.useState("");
+  const [targetMode, setTargetMode] = React.useState<IntakeMode>("github");
   const [busy, setBusy] = React.useState(false);
   const [scoutBusy, setScoutBusy] = React.useState(false);
   const [jobs, setJobs] = React.useState<AuditJob[]>([]);
@@ -1157,6 +1277,7 @@ export default function Home() {
   const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const roomId = "00000000-0000-0000-0000-000000000000";
+  const intakeCopy = INTAKE_MODE_COPY[targetMode];
 
   const refresh = React.useCallback(async () => {
     try {
@@ -1202,10 +1323,17 @@ export default function Home() {
     setBusy(true);
     setActionError(null);
     try {
+      const validationError = validateTargetInput(targetMode, target);
+      if (validationError) {
+        setActionError(validationError);
+        return;
+      }
+
+      const normalizedTarget = normalizeTargetInput(targetMode, target);
       const res = await fetch("/api/vigilance/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target, roomId }),
+        body: JSON.stringify({ target: normalizedTarget, roomId }),
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
@@ -1442,6 +1570,43 @@ export default function Home() {
                   {needsHumanReviewJobs.length} awaiting analyst review
                 </p>
               )}
+              <div className="mt-5 flex flex-wrap gap-2">
+                {INTAKE_MODE_ORDER.map((mode) => {
+                  const active = mode === targetMode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setTargetMode(mode)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+                        active
+                          ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
+                          : "border-white/10 bg-slate-950/40 text-slate-400 hover:border-cyan-400/20 hover:text-slate-200"
+                      }`}
+                    >
+                      {INTAKE_MODE_COPY[mode].label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-4 text-sm leading-6 text-slate-300">
+                {intakeCopy.helper}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                {intakeCopy.detail}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {INTAKE_PRESETS.filter((preset) => preset.mode === targetMode).map((preset) => (
+                  <button
+                    key={`${preset.mode}-${preset.label}`}
+                    type="button"
+                    onClick={() => setTarget(preset.value)}
+                    className="rounded-full border border-white/10 bg-slate-950/50 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-cyan-400/20 hover:text-white"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="flex w-full flex-col gap-3 lg:max-w-xl lg:flex-row">
@@ -1454,7 +1619,7 @@ export default function Home() {
                   if (e.key === "Enter" && target.trim()) void submitTarget();
                 }}
                 className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50"
-                placeholder="github.com/org/repo or Immunefi project identifier"
+                placeholder={intakeCopy.placeholder}
               />
               <button
                 id="submit-target-btn"

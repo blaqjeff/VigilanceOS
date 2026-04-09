@@ -3,7 +3,10 @@ import { logger } from "@elizaos/core";
 import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
 import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
-import { getIntegrationReadiness, getReadinessSnapshot } from "../../readiness.js";
+import {
+  getReadinessSnapshot,
+  refreshModelReadinessSnapshot,
+} from "../../readiness.js";
 import { ensureScoutWatcher, getScoutWatcherSnapshot, refreshScoutWatcher } from "../../scout/watcher.js";
 import type { IngestionResult } from "../../pipeline/types.js";
 import { formatAuditCompletionAlert, sendTelegramAlert } from "../../telegram/ops.js";
@@ -38,6 +41,98 @@ async function persistCompatMemory(task: string, writer: () => Promise<void>) {
     await writer();
   } catch (error) {
     logger.warn(`[UIBridge] ${task} memory persistence skipped: ${error}`);
+  }
+}
+
+async function executeAuditLifecycle({
+  runtime,
+  roomId,
+  userId,
+  jobId,
+}: {
+  runtime: any;
+  roomId: string;
+  userId?: string;
+  jobId: string;
+}) {
+  const job = getJob(jobId);
+  if (!job) {
+    logger.warn(`[UIBridge] audit lifecycle aborted: missing job ${jobId}`);
+    return;
+  }
+
+  let ingestion: IngestionResult | undefined;
+
+  try {
+    if (job.target.type === "github" || job.target.type === "local") {
+      ingestion = await ingestTarget(job.target);
+      updateJobData(job.jobId, { ingestion });
+    }
+  } catch (ingestionErr: any) {
+    logger.warn(
+      `[UIBridge] Ingestion failed for ${job.target.displayName}: ${ingestionErr?.message}`
+    );
+  }
+
+  try {
+    const report = await runAudit(runtime, {
+      target: job.target,
+      scopeContext: job.scoutData,
+      ingestion,
+    });
+
+    transitionJob(job.jobId, "reviewing", { report });
+    await persistCompatMemory("audit", () =>
+      writeAudit(runtime, { roomId, userId, target: job.target, report })
+    );
+
+    const verdict = await runReview(runtime, {
+      target: job.target,
+      report,
+      scopeContext: job.scoutData,
+      ingestion,
+    });
+
+    await persistCompatMemory("review", () =>
+      writeReview(runtime, { roomId, userId, target: job.target, report, verdict })
+    );
+
+    if (verdict.verdict === "publish") {
+      const finalJob = transitionJob(job.jobId, "published", { verdict });
+      await persistCompatMemory("finding", () =>
+        writeFinding(runtime, { roomId, userId, target: job.target, report, verdict })
+      );
+      await sendTelegramAlert(
+        runtime,
+        finalJob.scoutData as any,
+        formatAuditCompletionAlert(finalJob)
+      );
+      return;
+    }
+
+    if (verdict.verdict === "needs_human_review") {
+      const finalJob = transitionJob(job.jobId, "needs_human_review", { verdict });
+      await sendTelegramAlert(
+        runtime,
+        finalJob.scoutData as any,
+        formatAuditCompletionAlert(finalJob)
+      );
+      return;
+    }
+
+    const finalJob = transitionJob(job.jobId, "discarded", { verdict });
+    await sendTelegramAlert(
+      runtime,
+      finalJob.scoutData as any,
+      formatAuditCompletionAlert(finalJob)
+    );
+  } catch (error: any) {
+    transitionJob(job.jobId, "failed", {
+      error: `Audit lifecycle error: ${error?.message ?? error}`,
+    });
+    logger.error(`[UIBridge] audit lifecycle failed for ${job.jobId}: ${error}`);
+  } finally {
+    if (ingestion) cleanupIngestion(ingestion);
   }
 }
 
@@ -170,7 +265,7 @@ const runAuditRoute: Route = {
       }
 
       // Check model readiness
-      const modelReadiness = getIntegrationReadiness("model");
+      const modelReadiness = (await refreshModelReadinessSnapshot()).integrations.model;
       if (!modelReadiness.available) {
         transitionJob(job.jobId, "failed", {
           error: `Model unavailable: ${modelReadiness.summary}`,
@@ -182,91 +277,22 @@ const runAuditRoute: Route = {
         });
       }
 
-      // Transition to scanning
-      transitionJob(job.jobId, "scanning");
+      const startedJob = transitionJob(job.jobId, "scanning");
+      void executeAuditLifecycle({
+        runtime,
+        roomId,
+        userId,
+        jobId: job.jobId,
+      });
 
-      // --- INGESTION: clone repo or read local folder ---
-      let ingestion: IngestionResult | undefined;
-      try {
-        if (job.target.type === "github" || job.target.type === "local") {
-          ingestion = await ingestTarget(job.target);
-          // Store ingestion metadata on the job
-          updateJobData(job.jobId, { ingestion });
-        }
-      } catch (ingestionErr: any) {
-        // Ingestion failure is not fatal — we can still try to audit without code
-        logger.warn(`[UIBridge] Ingestion failed for ${job.target.displayName}: ${ingestionErr?.message}`);
-      }
-
-      let report;
-      try {
-        report = await runAudit(runtime, {
-          target: job.target,
-          scopeContext: job.scoutData,
-          ingestion,
-        });
-      } catch (auditErr: any) {
-        if (ingestion) cleanupIngestion(ingestion);
-        transitionJob(job.jobId, "failed", {
-          error: `Audit error: ${auditErr?.message ?? auditErr}`,
-        });
-        return json(res, 500, {
-          success: false,
-          error: "Audit engine failed",
-          jobId: job.jobId,
-        });
-      }
-
-      // Transition to reviewing
-      transitionJob(job.jobId, "reviewing", { report });
-      await persistCompatMemory("audit", () =>
-        writeAudit(runtime, { roomId, userId, target: job.target, report })
-      );
-
-      let verdict;
-      try {
-        verdict = await runReview(runtime, {
-          target: job.target,
-          report,
-          scopeContext: job.scoutData,
-          ingestion,
-        });
-      } catch (reviewErr: any) {
-        if (ingestion) cleanupIngestion(ingestion);
-        transitionJob(job.jobId, "failed", {
-          error: `Review error: ${reviewErr?.message ?? reviewErr}`,
-        });
-        return json(res, 500, {
-          success: false,
-          error: "Review engine failed",
-          jobId: job.jobId,
-        });
-      }
-
-      // Cleanup cloned repos after audit+review completes
-      if (ingestion) cleanupIngestion(ingestion);
-
-      await persistCompatMemory("review", () =>
-        writeReview(runtime, { roomId, userId, target: job.target, report, verdict })
-      );
-
-      // Transition to terminal state
-      if (verdict.verdict === "publish") {
-        const finalJob = transitionJob(job.jobId, "published", { verdict });
-        await persistCompatMemory("finding", () =>
-          writeFinding(runtime, { roomId, userId, target: job.target, report, verdict })
-        );
-        await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
-        return json(res, 200, { success: true, data: { job: finalJob } });
-      } else if (verdict.verdict === "needs_human_review") {
-        const finalJob = transitionJob(job.jobId, "needs_human_review", { verdict });
-        await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
-        return json(res, 200, { success: true, data: { job: finalJob } });
-      } else {
-        const finalJob = transitionJob(job.jobId, "discarded", { verdict });
-        await sendTelegramAlert(runtime, finalJob.scoutData as any, formatAuditCompletionAlert(finalJob));
-        return json(res, 200, { success: true, data: { job: finalJob } });
-      }
+      return json(res, 202, {
+        success: true,
+        data: {
+          job: startedJob,
+          accepted: true,
+          message: "Audit accepted and running in the background.",
+        },
+      });
     } catch (e) {
       logger.error(`[UIBridge] audit failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
@@ -284,6 +310,7 @@ const readinessRoute: Route = {
   public: true,
   handler: async (_req: any, res: any) => {
     try {
+      await refreshModelReadinessSnapshot();
       return json(res, 200, { success: true, data: getReadinessSnapshot() });
     } catch (e) {
       logger.error(`[UIBridge] readiness failed: ${e}`);

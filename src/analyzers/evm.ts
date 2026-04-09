@@ -83,6 +83,20 @@ function isComment(trimmed: string): boolean {
   return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*");
 }
 
+function isInterfaceOnlyFile(file: SourceFile): boolean {
+  const content = file.content;
+  const hasInterface = /\binterface\s+\w+/.test(content);
+  const hasConcreteType = /\b(contract|library)\s+\w+/.test(content);
+  return hasInterface && !hasConcreteType;
+}
+
+function isPrototypeSignature(lines: string[], startIndex: number): boolean {
+  const signature = lines.slice(startIndex, Math.min(lines.length, startIndex + 8)).join(" ");
+  const signatureEnd = signature.indexOf(";");
+  const bodyStart = signature.indexOf("{");
+  return signatureEnd >= 0 && (bodyStart < 0 || signatureEnd < bodyStart);
+}
+
 // ---------------------------------------------------------------------------
 // 1. Oracle / Price Manipulation
 // ---------------------------------------------------------------------------
@@ -174,6 +188,8 @@ function analyzeOraclePrice(file: SourceFile): EvmSignal[] {
 // ---------------------------------------------------------------------------
 
 function analyzeAccessControl(file: SourceFile): EvmSignal[] {
+  if (isInterfaceOnlyFile(file)) return [];
+
   const signals: EvmSignal[] = [];
   const lines = getLines(file.content);
 
@@ -189,6 +205,8 @@ function analyzeAccessControl(file: SourceFile): EvmSignal[] {
       const sensitiveNames = /^(set|update|change|withdraw|transfer|pause|unpause|upgrade|migrate|mint|burn|add|remove|revoke|grant|kill|destroy|selfdestruct)/i;
 
       if (sensitiveNames.test(funcName)) {
+        if (isPrototypeSignature(lines, i)) continue;
+
         // Get the full function signature (may span multiple lines)
         const sigLines = lines.slice(i, Math.min(lines.length, i + 5)).join(" ");
 
@@ -339,6 +357,8 @@ function analyzeAccountingInvariant(file: SourceFile): EvmSignal[] {
 // ---------------------------------------------------------------------------
 
 function analyzeUpgradeability(file: SourceFile): EvmSignal[] {
+  if (isInterfaceOnlyFile(file)) return [];
+
   const signals: EvmSignal[] = [];
   const lines = getLines(file.content);
   const fullContent = file.content;
@@ -349,6 +369,7 @@ function analyzeUpgradeability(file: SourceFile): EvmSignal[] {
 
     // Initializer without "initializer" modifier
     if (/function\s+initialize\s*\(/.test(trimmed) || /function\s+init\s*\(/.test(trimmed)) {
+      if (isPrototypeSignature(lines, i)) continue;
       const sigLines = lines.slice(i, Math.min(lines.length, i + 5)).join(" ");
       if (!/\binitializer\b/.test(sigLines) && !/\breinitializer\b/.test(sigLines)) {
         signals.push({

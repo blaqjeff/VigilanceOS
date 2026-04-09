@@ -29,6 +29,9 @@ import { simpleHash } from "./utils.js";
 
 function normalizeGithubUrl(input: string): string {
   const trimmed = input.trim();
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) {
+    return `https://github.com/${trimmed}`;
+  }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
   if (trimmed.startsWith("github.com/")) return `https://${trimmed}`;
   return trimmed;
@@ -39,7 +42,10 @@ export function targetFromInput(input: string): Target {
 
   // GitHub URL
   const isGithub =
-    raw.includes("github.com/") || raw.startsWith("https://github.com/");
+    raw.includes("github.com/") ||
+    raw.startsWith("https://github.com/") ||
+    raw.startsWith("http://github.com/") ||
+    /^[\w.-]+\/[\w.-]+$/.test(raw);
   if (isGithub) {
     const url = normalizeGithubUrl(raw);
     const targetId = `gh_${simpleHash(url)}`;
@@ -740,13 +746,35 @@ function findNeighborhoodIdsForFiles(
     .map((neighborhood) => neighborhood.id);
 }
 
+function variantKindForPath(path: string): "safe" | "risky" | "neutral" {
+  return path
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) => variantSegmentKind(segment))
+    .find((value) => value !== "neutral") ?? "neutral";
+}
+
+function pathsAreOppositeVariants(left: string, right: string): boolean {
+  const leftKind = variantKindForPath(left);
+  const rightKind = variantKindForPath(right);
+  if (leftKind === "neutral" || rightKind === "neutral" || leftKind === rightKind) {
+    return false;
+  }
+
+  return normalizeVariantPath(left) === normalizeVariantPath(right);
+}
+
 function relatedSignalsForSeed(seed: AnalyzerSignal, signals: AnalyzerSignal[]): AnalyzerSignal[] {
   const sameFileAndClass = signals.filter(
     (signal) => signal.file === seed.file && signal.vulnClass === seed.vulnClass
   );
   if (sameFileAndClass.length > 0) return sameFileAndClass.slice(0, 6);
 
-  const sameClass = signals.filter((signal) => signal.vulnClass === seed.vulnClass);
+  const sameClass = signals.filter(
+    (signal) =>
+      signal.vulnClass === seed.vulnClass &&
+      !pathsAreOppositeVariants(seed.file, signal.file)
+  );
   if (sameClass.length > 0) return sameClass.slice(0, 6);
 
   return [seed];
@@ -1135,10 +1163,26 @@ function primaryVulnerabilityClass(
   return candidate.evidence.traces[0]?.vulnerabilityClass;
 }
 
+function candidatesRepresentOppositeVariants(
+  left: AuditFindingCandidate,
+  right: AuditFindingCandidate
+): boolean {
+  const leftFiles = candidatePrimaryFiles(left);
+  const rightFiles = candidatePrimaryFiles(right);
+
+  return leftFiles.some((leftFile) =>
+    rightFiles.some((rightFile) => pathsAreOppositeVariants(leftFile, rightFile))
+  );
+}
+
 function candidatesShouldMerge(
   left: AuditFindingCandidate,
   right: AuditFindingCandidate
 ): boolean {
+  if (candidatesRepresentOppositeVariants(left, right)) {
+    return false;
+  }
+
   if (candidateFingerprint(left) === candidateFingerprint(right)) {
     return true;
   }
@@ -1153,7 +1197,111 @@ function candidatesShouldMerge(
   );
 }
 
-function rankCandidates(candidates: AuditFindingCandidate[]): AuditFindingCandidate[] {
+function candidatePrimaryFiles(candidate: AuditFindingCandidate): string[] {
+  return uniqueStrings([
+    ...candidate.evidence.traces.map((trace) => trace.file),
+    ...(candidate.affectedSurface ?? []).map((surface) =>
+      surface.includes(":") ? surface.split(":")[0] : surface
+    ),
+  ]).filter((value) => /\.[a-z0-9]+$/i.test(value));
+}
+
+function variantSegmentKind(
+  value: string
+): "safe" | "risky" | "neutral" {
+  const segment = value.trim().toLowerCase();
+  if (
+    ["secure", "recommended", "patched", "fixed", "good"].includes(segment)
+  ) {
+    return "safe";
+  }
+
+  if (
+    ["insecure", "unsafe", "vulnerable", "exploit", "attacks", "attack"].includes(
+      segment
+    )
+  ) {
+    return "risky";
+  }
+
+  return "neutral";
+}
+
+function normalizeVariantPath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) =>
+      variantSegmentKind(segment) === "neutral" ? segment.toLowerCase() : "__variant__"
+    )
+    .join("/");
+}
+
+function fileVariantBias(file: string, repoFiles: string[]): number {
+  const normalized = normalizeVariantPath(file);
+  const kind = file
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((segment) => variantSegmentKind(segment))
+    .find((value) => value !== "neutral");
+
+  if (!kind) return 0;
+
+  const counterpartExists = repoFiles.some((candidate) => {
+    if (candidate === file) return false;
+    if (normalizeVariantPath(candidate) !== normalized) return false;
+    const candidateKind = candidate
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((segment) => variantSegmentKind(segment))
+      .find((value) => value !== "neutral");
+    return candidateKind && candidateKind !== kind;
+  });
+
+  if (!counterpartExists) {
+    return kind === "risky" ? 1 : 0;
+  }
+
+  return kind === "risky" ? 3 : -4;
+}
+
+function candidateVariantBias(
+  candidate: AuditFindingCandidate,
+  ingestion?: IngestionResult
+): number {
+  if (!ingestion) return 0;
+  const repoFiles = ingestion.sourceFiles.map((file) => file.relativePath);
+  const files = candidatePrimaryFiles(candidate);
+  if (files.length === 0) return 0;
+
+  return files.reduce(
+    (score, file) => score + fileVariantBias(file, repoFiles),
+    0
+  );
+}
+
+function suppressReferenceSafeCandidates(
+  candidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult
+): AuditFindingCandidate[] {
+  if (!ingestion || candidates.length === 0) return candidates;
+
+  const repoFiles = ingestion.sourceFiles.map((file) => file.relativePath);
+  const filtered = candidates.filter((candidate) => {
+    const files = candidatePrimaryFiles(candidate);
+    if (files.length === 0) return true;
+
+    const safeFiles = files.filter((file) => fileVariantBias(file, repoFiles) < 0);
+    return safeFiles.length !== files.length;
+  });
+
+  return filtered.length > 0 ? filtered : candidates;
+}
+
+function rankCandidates(
+  candidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult
+): AuditFindingCandidate[] {
   return [...candidates].sort((left, right) => {
     const severityDelta = severityRank(right.severity) - severityRank(left.severity);
     if (severityDelta !== 0) return severityDelta;
@@ -1161,6 +1309,10 @@ function rankCandidates(candidates: AuditFindingCandidate[]): AuditFindingCandid
     const proofDelta =
       proofRank(right.evidence.proofLevel) - proofRank(left.evidence.proofLevel);
     if (proofDelta !== 0) return proofDelta;
+
+    const variantDelta =
+      candidateVariantBias(right, ingestion) - candidateVariantBias(left, ingestion);
+    if (variantDelta !== 0) return variantDelta;
 
     const confidenceDelta = right.confidence - left.confidence;
     if (Math.abs(confidenceDelta) > 0.001) return confidenceDelta;
@@ -1174,11 +1326,12 @@ function rankCandidates(candidates: AuditFindingCandidate[]): AuditFindingCandid
 
 function dedupeRankedCandidates(
   candidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult,
   limit = MAX_CANDIDATE_FINDINGS
 ): AuditFindingCandidate[] {
   const deduped: AuditFindingCandidate[] = [];
 
-  for (const candidate of rankCandidates(candidates)) {
+  for (const candidate of rankCandidates(candidates, ingestion)) {
     const existingIndex = deduped.findIndex((existing) =>
       candidatesShouldMerge(existing, candidate)
     );
@@ -1194,7 +1347,7 @@ function dedupeRankedCandidates(
     if (deduped.length >= limit) break;
   }
 
-  return deduped;
+  return suppressReferenceSafeCandidates(deduped, ingestion);
 }
 
 function coerceAnalyzerSignalsFromCandidate(
@@ -1605,6 +1758,9 @@ function detectFrameworkProtections(
       if (/\bowner\s*=/.test(content)) {
         addProtection(`${file.relativePath}: Anchor owner constraint detected`);
       }
+      if (/ctx\.accounts\.\w+\.key\s*\(\)\s*(==|!=)|ctx\.accounts\.\w+\.key\s*(==|!=)|ctx\.accounts\.\w+\.is_signer|\.owner\s*(==|!=)|return Err\(ProgramError::InvalidAccountData\)|MissingRequiredSignature/.test(content)) {
+        addProtection(`${file.relativePath}: inline account ownership / authority validation detected`);
+      }
       if (/Program<'info>|\bProgram\s*<\s*'info/.test(content)) {
         addProtection(`${file.relativePath}: typed Program account validation detected`);
       }
@@ -1807,10 +1963,11 @@ export async function runAudit(
       );
     });
 
-    baseCandidates = dedupeRankedCandidates([
-      ...baseCandidates,
-      ...exploratoryCandidates,
-    ], MAX_CANDIDATE_FINDINGS + MAX_EXPLORATORY_LEADS);
+    baseCandidates = dedupeRankedCandidates(
+      [...baseCandidates, ...exploratoryCandidates],
+      ingestion,
+      MAX_CANDIDATE_FINDINGS + MAX_EXPLORATORY_LEADS
+    );
   }
 
   if (baseCandidates.length === 0) {
@@ -1852,6 +2009,12 @@ export async function runAudit(
       },
     ];
   }
+
+  baseCandidates = dedupeRankedCandidates(
+    baseCandidates,
+    ingestion,
+    MAX_CANDIDATE_FINDINGS + MAX_EXPLORATORY_LEADS
+  );
 
   const candidateSeedContext = baseCandidates
     .map((candidate) =>
@@ -1998,7 +2161,7 @@ export async function runAudit(
             pocFramework
           )
         );
-        const rankedCandidates = dedupeRankedCandidates(mergedCandidates);
+        const rankedCandidates = dedupeRankedCandidates(mergedCandidates, ingestion);
         if (rankedCandidates.length > 0) {
           return reportFromPrimaryCandidate(
             reportId,

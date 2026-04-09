@@ -21,6 +21,11 @@ export type ReadinessSnapshot = {
   integrations: Record<IntegrationKey, IntegrationReadiness>;
 };
 
+type IntegrationTemplate = Pick<
+  IntegrationReadiness,
+  "key" | "label" | "feature"
+>;
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -43,6 +48,65 @@ function cloneSnapshot(snapshot: ReadinessSnapshot): ReadinessSnapshot {
       telegram: cloneIntegration(snapshot.integrations.telegram),
     },
   };
+}
+
+function integrationTemplate(key: IntegrationKey): IntegrationTemplate {
+  switch (key) {
+    case "immunefiMcp":
+      return {
+        key,
+        label: "Immunefi MCP",
+        feature: "Live Scout discovery",
+      };
+    case "model":
+      return {
+        key,
+        label: "OpenAI-Compatible Model",
+        feature: "LLM-backed audit and review",
+      };
+    case "telegram":
+      return {
+        key,
+        label: "Telegram",
+        feature: "Telegram alerts and approval controls",
+      };
+  }
+}
+
+function buildReadinessResult({
+  key,
+  label,
+  feature,
+  state,
+  available,
+  summary,
+  details = [],
+  action,
+}: IntegrationTemplate & {
+  state: IntegrationState;
+  available: boolean;
+  summary: string;
+  details?: string[];
+  action?: string;
+}): IntegrationReadiness {
+  return {
+    key,
+    label,
+    feature,
+    state,
+    available,
+    summary,
+    details,
+    action,
+    checkedAt: nowIso(),
+  };
+}
+
+function joinUrl(base: string, suffix: string): string {
+  return `${String(base).replace(/\/+$/, "")}/${String(suffix).replace(
+    /^\/+/,
+    ""
+  )}`;
 }
 
 function defaultIntegration(
@@ -139,6 +203,123 @@ export function getIntegrationReadiness(
   key: IntegrationKey
 ): IntegrationReadiness {
   return cloneIntegration(readinessSnapshot.integrations[key]);
+}
+
+export function updateIntegrationReadiness(
+  key: IntegrationKey,
+  integration: IntegrationReadiness
+): ReadinessSnapshot {
+  const current = getReadinessSnapshot();
+  return setReadinessSnapshot(
+    createReadinessSnapshot({
+      ...current.integrations,
+      [key]: integration,
+    })
+  );
+}
+
+export async function probeModelReadinessFromEnv(): Promise<IntegrationReadiness> {
+  const template = integrationTemplate("model");
+  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
+  const apiUrl = String(
+    process.env.OPENAI_API_URL || process.env.OPENAI_BASE_URL || ""
+  ).trim();
+  const modelName = String(process.env.MODEL_NAME || "configured default").trim();
+
+  if (!apiUrl) {
+    return buildReadinessResult({
+      ...template,
+      state: "blocked",
+      available: false,
+      summary: "OPENAI_API_URL is not set.",
+      action: "Set OPENAI_API_URL to a reachable OpenAI-compatible endpoint.",
+    });
+  }
+
+  if (!apiKey) {
+    return buildReadinessResult({
+      ...template,
+      state: "blocked",
+      available: false,
+      summary: "OPENAI_API_KEY is not set.",
+      action: "Set OPENAI_API_KEY before running LLM-backed audits.",
+    });
+  }
+
+  const probeUrl = joinUrl(apiUrl, "models");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(probeUrl, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+    });
+
+    if (response.ok) {
+      return buildReadinessResult({
+        ...template,
+        state: "ready",
+        available: true,
+        summary: "Model endpoint accepted the readiness probe.",
+        details: [`Endpoint: ${probeUrl}`, `Model: ${modelName}`],
+      });
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return buildReadinessResult({
+        ...template,
+        state: "blocked",
+        available: false,
+        summary: `Model endpoint rejected authentication (${response.status} ${response.statusText}).`,
+        details: [`Endpoint: ${probeUrl}`, `Model: ${modelName}`],
+        action: "Update OPENAI_API_KEY or point OPENAI_API_URL at a valid endpoint.",
+      });
+    }
+
+    if (response.status === 404) {
+      return buildReadinessResult({
+        ...template,
+        state: "degraded",
+        available: false,
+        summary:
+          "Model endpoint is reachable, but the /models readiness probe returned 404.",
+        details: [`Endpoint: ${probeUrl}`, `Model: ${modelName}`],
+        action:
+          "Verify that OPENAI_API_URL points at the API root expected by the OpenAI plugin.",
+      });
+    }
+
+    return buildReadinessResult({
+      ...template,
+      state: "degraded",
+      available: false,
+      summary: `Model endpoint readiness probe failed with ${response.status} ${response.statusText}.`,
+      details: [`Endpoint: ${probeUrl}`, `Model: ${modelName}`],
+      action: "Check endpoint availability and credentials before relying on model-backed audits.",
+    });
+  } catch (error) {
+    const summary =
+      error instanceof Error ? error.message : "Unknown model readiness probe error.";
+    return buildReadinessResult({
+      ...template,
+      state: "degraded",
+      available: false,
+      summary: `Model endpoint readiness probe failed: ${summary}`,
+      details: [`Endpoint: ${probeUrl}`, `Model: ${modelName}`],
+      action: "Verify network access and the OPENAI_API_URL value.",
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function refreshModelReadinessSnapshot(): Promise<ReadinessSnapshot> {
+  const integration = await probeModelReadinessFromEnv();
+  return updateIntegrationReadiness("model", integration);
 }
 
 export function formatReadinessLines(snapshot: ReadinessSnapshot): string[] {

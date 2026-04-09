@@ -81,6 +81,66 @@ function surrounding(lines: string[], lineIdx: number, radius = 2): string {
     .join("\n");
 }
 
+function hasFieldLevelValidation(lines: string[], fieldName: string): boolean {
+  const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const directAccountAccess = new RegExp(`ctx\\.accounts\\.${escapedField}`);
+  const fieldChecks = [
+    new RegExp(`ctx\\.accounts\\.${escapedField}\\.owner`),
+    new RegExp(`ctx\\.accounts\\.${escapedField}\\.key\\s*\\(`),
+    new RegExp(`ctx\\.accounts\\.${escapedField}\\.key\\b`),
+    new RegExp(`\\b${escapedField}\\.owner\\b`),
+    new RegExp(`\\b${escapedField}\\.key\\b`),
+  ];
+
+  return lines.some((line) => {
+    if (!directAccountAccess.test(line) && !new RegExp(`\\b${escapedField}\\b`).test(line)) {
+      return false;
+    }
+    return fieldChecks.some((pattern) => pattern.test(line)) &&
+      /==|!=|require!|require\(|err!|return Err|constraint\s*=|has_one\s*=/.test(line);
+  });
+}
+
+function hasSignerOnlyValidation(lines: string[], fieldName: string): boolean {
+  const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const authorityLike = /^(authority|admin|owner|payer)$/i.test(fieldName);
+  if (!authorityLike) return false;
+
+  const signerChecks = [
+    new RegExp(`ctx\\.accounts\\.${escapedField}\\.is_signer`),
+    new RegExp(`ctx\\.accounts\\.${escapedField}\\.key\\s*\\(`),
+    new RegExp(`ctx\\.accounts\\.${escapedField}\\.key\\b`),
+  ];
+
+  return lines.some((line) => signerChecks.some((pattern) => pattern.test(line)));
+}
+
+function hasDeserializedOwnerValidation(lines: string[], fieldName: string): boolean {
+  const escapedField = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sourcePattern = new RegExp(
+    `let\\s+(\\w+)\\s*=.*ctx\\.accounts\\.${escapedField}(?:\\.|\\b)`,
+    "i"
+  );
+
+  for (const line of lines) {
+    const match = line.match(sourcePattern);
+    const variable = match?.[1];
+    if (!variable) continue;
+    const ownerCheck = new RegExp(`${variable}\\.owner\\b`);
+    if (
+      lines.some(
+        (candidate) =>
+          ownerCheck.test(candidate) &&
+          /==|!=|require!|require\(|err!|return Err/.test(candidate)
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Oracle / Price / Accounting Logic
 // ---------------------------------------------------------------------------
@@ -214,8 +274,14 @@ function analyzeOwnershipValidation(file: SourceFile): AnalysisSignal[] {
       const fieldName = nameMatch?.[1] ?? "unknown";
 
       // Check surrounding context for owner verification
-      const context = lines.slice(Math.max(0, i - 2), Math.min(lines.length, i + 5)).join(" ");
-      if (!/\b(owner|key)\s*==/.test(context) && !/#\[account\(.*owner/.test(context)) {
+      const context = lines.slice(Math.max(0, i - 6), Math.min(lines.length, i + 25)).join(" ");
+      const hasValidation =
+        /\b(owner|key)\s*(==|!=)/.test(context) ||
+        /#\[account\(.*owner/.test(context) ||
+        hasFieldLevelValidation(lines, fieldName) ||
+        hasSignerOnlyValidation(lines, fieldName) ||
+        hasDeserializedOwnerValidation(lines, fieldName);
+      if (!hasValidation) {
         signals.push({
           vulnClass: "ownership_validation",
           severityHint: "critical",
@@ -234,8 +300,10 @@ function analyzeOwnershipValidation(file: SourceFile): AnalysisSignal[] {
       !/\.owner\b/.test(trimmed) &&
       !trimmed.startsWith("//")
     ) {
-      const context = lines.slice(Math.max(0, i - 5), Math.min(lines.length, i + 2)).join(" ");
-      if (!/\.owner\s*==|owner\s*=/.test(context)) {
+      const context = lines.slice(Math.max(0, i - 15), Math.min(lines.length, i + 12)).join(" ");
+      if (
+        !/\.owner\s*(==|!=)|owner\s*=|token\.owner|authority\.key|ctx\.accounts\.\w+\.key|ctx\.accounts\.\w+\.is_signer/.test(context)
+      ) {
         signals.push({
           vulnClass: "ownership_validation",
           severityHint: "high",
