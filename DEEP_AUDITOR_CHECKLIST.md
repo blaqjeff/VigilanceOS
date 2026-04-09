@@ -56,6 +56,7 @@ Done when:
 - [x] Change the audit engine to return multiple candidate findings
 - [x] Add dedupe and ranking across candidate findings
 - [x] Preserve weaker but grounded findings for review instead of dropping them silently
+- [x] Review candidate findings individually and derive the aggregate job outcome from reviewed findings
 
 Done when:
 
@@ -115,6 +116,7 @@ Done when:
 - [x] Surface neighborhood source, evidence source, and proof state
 - [x] Show why a finding was downgraded, queued, or discarded
 - [x] Keep the operator flow understandable even as multi-finding jobs appear
+- [x] Flatten the main findings gallery by reviewed finding instead of job-primary summaries
 
 Done when:
 
@@ -126,6 +128,7 @@ Done when:
 - [x] Refresh model readiness live instead of relying on a stale boot-time snapshot
 - [x] Launch audits asynchronously from the backend so long-running jobs do not depend on a single held-open request
 - [x] Suppress paired `secure` reference examples from dominating controlled Solana demo targets
+- [x] Repair Telegram proactive alert delivery so Scout/audit notifications no longer fail on missing send handlers
 - [ ] Rerun the controlled Solana demo target with the new multi-finding path
 - [ ] Rerun the controlled EVM demo target with the new multi-finding path
 - [ ] Capture one or two findings that clearly show grounded reasoning and honest evidence labels

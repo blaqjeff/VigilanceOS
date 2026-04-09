@@ -1,6 +1,6 @@
 import type { Plugin, Route } from "@elizaos/core";
 import { logger } from "@elizaos/core";
-import { runAudit, runReview, targetFromInput } from "../../pipeline/audit.js";
+import { runAudit, runReviewFindings, targetFromInput } from "../../pipeline/audit.js";
 import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 import {
@@ -86,21 +86,32 @@ async function executeAuditLifecycle({
       writeAudit(runtime, { roomId, userId, target: job.target, report })
     );
 
-    const verdict = await runReview(runtime, {
+    const reviewOutcome = await runReviewFindings(runtime, {
       target: job.target,
       report,
       scopeContext: job.scoutData,
       ingestion,
     });
+    const reviewedReport = reviewOutcome.report;
+    const verdict = reviewOutcome.verdict;
 
     await persistCompatMemory("review", () =>
-      writeReview(runtime, { roomId, userId, target: job.target, report, verdict })
+      writeReview(runtime, { roomId, userId, target: job.target, report: reviewedReport, verdict })
     );
 
     if (verdict.verdict === "publish") {
-      const finalJob = transitionJob(job.jobId, "published", { verdict });
+      const finalJob = transitionJob(job.jobId, "published", {
+        report: reviewedReport,
+        verdict,
+      });
       await persistCompatMemory("finding", () =>
-        writeFinding(runtime, { roomId, userId, target: job.target, report, verdict })
+        writeFinding(runtime, {
+          roomId,
+          userId,
+          target: job.target,
+          report: reviewedReport,
+          verdict,
+        })
       );
       await sendTelegramAlert(
         runtime,
@@ -111,7 +122,10 @@ async function executeAuditLifecycle({
     }
 
     if (verdict.verdict === "needs_human_review") {
-      const finalJob = transitionJob(job.jobId, "needs_human_review", { verdict });
+      const finalJob = transitionJob(job.jobId, "needs_human_review", {
+        report: reviewedReport,
+        verdict,
+      });
       await sendTelegramAlert(
         runtime,
         finalJob.scoutData as any,
@@ -120,7 +134,10 @@ async function executeAuditLifecycle({
       return;
     }
 
-    const finalJob = transitionJob(job.jobId, "discarded", { verdict });
+    const finalJob = transitionJob(job.jobId, "discarded", {
+      report: reviewedReport,
+      verdict,
+    });
     await sendTelegramAlert(
       runtime,
       finalJob.scoutData as any,

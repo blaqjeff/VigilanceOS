@@ -1092,27 +1092,125 @@ function mergeDuplicateCandidates(
   };
 }
 
-function reportFromPrimaryCandidate(
+function findingCountsFromCandidates(
+  candidates: AuditFindingCandidate[]
+): AuditReport["findingCounts"] {
+  const counts = {
+    total: candidates.length,
+    published: 0,
+    needsHumanReview: 0,
+    discarded: 0,
+  };
+
+  for (const candidate of candidates) {
+    if (candidate.review?.verdict === "publish") {
+      counts.published += 1;
+    } else if (candidate.review?.verdict === "needs_human_review") {
+      counts.needsHumanReview += 1;
+    } else if (candidate.review?.verdict === "discard") {
+      counts.discarded += 1;
+    }
+  }
+
+  return counts;
+}
+
+function candidateReviewRank(candidate: AuditFindingCandidate): number {
+  switch (candidate.review?.verdict) {
+    case "publish":
+      return 3;
+    case "needs_human_review":
+      return 2;
+    case "discard":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function compareCandidatePriority(
+  left: AuditFindingCandidate,
+  right: AuditFindingCandidate,
+  ingestion?: IngestionResult
+): number {
+  const severityDelta = severityRank(right.severity) - severityRank(left.severity);
+  if (severityDelta !== 0) return severityDelta;
+
+  const proofDelta =
+    proofRank(right.evidence.proofLevel) - proofRank(left.evidence.proofLevel);
+  if (proofDelta !== 0) return proofDelta;
+
+  const variantDelta =
+    candidateVariantBias(right, ingestion) - candidateVariantBias(left, ingestion);
+  if (variantDelta !== 0) return variantDelta;
+
+  const confidenceDelta = right.confidence - left.confidence;
+  if (Math.abs(confidenceDelta) > 0.001) return confidenceDelta;
+
+  const traceDelta = right.evidence.traces.length - left.evidence.traces.length;
+  if (traceDelta !== 0) return traceDelta;
+
+  return left.title.localeCompare(right.title);
+}
+
+function rankCandidates(
+  candidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult
+): AuditFindingCandidate[] {
+  return [...candidates].sort((left, right) =>
+    compareCandidatePriority(left, right, ingestion)
+  );
+}
+
+function rankReviewedCandidates(
+  candidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult
+): AuditFindingCandidate[] {
+  return [...candidates].sort((left, right) => {
+    const reviewDelta = candidateReviewRank(right) - candidateReviewRank(left);
+    if (reviewDelta !== 0) return reviewDelta;
+    return compareCandidatePriority(left, right, ingestion);
+  });
+}
+
+function reportFromLeadCandidate(
   reportId: string,
   targetId: string,
-  primary: AuditFindingCandidate,
-  candidates: AuditFindingCandidate[]
+  candidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult
 ): AuditReport {
+  const orderedCandidates =
+    candidates.some((candidate) => candidate.review) &&
+    candidates.some((candidate) => candidate.review?.verdict)
+      ? rankReviewedCandidates(candidates, ingestion)
+      : rankCandidates(candidates, ingestion);
+  const lead = orderedCandidates[0];
+
   return {
     reportId,
     targetId,
-    title: primary.title,
-    severity: primary.severity,
-    confidence: primary.confidence,
-    description: primary.description,
-    impact: primary.impact,
-    whyFlagged: primary.whyFlagged,
-    affectedSurface: primary.affectedSurface,
-    recommendations: primary.recommendations,
-    evidence: primary.evidence,
-    poc: primary.poc,
-    candidateFindings: candidates,
+    title: lead.title,
+    severity: lead.severity,
+    confidence: lead.confidence,
+    description: lead.description,
+    impact: lead.impact,
+    whyFlagged: lead.whyFlagged,
+    affectedSurface: lead.affectedSurface,
+    recommendations: lead.recommendations,
+    evidence: lead.evidence,
+    poc: lead.poc,
+    leadCandidateId: lead.candidateId,
+    candidateFindings: orderedCandidates,
+    findingCounts: findingCountsFromCandidates(orderedCandidates),
   };
+}
+
+function reportFromSingleCandidate(
+  reportId: string,
+  targetId: string,
+  candidate: AuditFindingCandidate
+): AuditReport {
+  return reportFromLeadCandidate(reportId, targetId, [candidate]);
 }
 
 function proofRank(proofLevel: EvidenceBundle["proofLevel"]): number {
@@ -1296,32 +1394,6 @@ function suppressReferenceSafeCandidates(
   });
 
   return filtered.length > 0 ? filtered : candidates;
-}
-
-function rankCandidates(
-  candidates: AuditFindingCandidate[],
-  ingestion?: IngestionResult
-): AuditFindingCandidate[] {
-  return [...candidates].sort((left, right) => {
-    const severityDelta = severityRank(right.severity) - severityRank(left.severity);
-    if (severityDelta !== 0) return severityDelta;
-
-    const proofDelta =
-      proofRank(right.evidence.proofLevel) - proofRank(left.evidence.proofLevel);
-    if (proofDelta !== 0) return proofDelta;
-
-    const variantDelta =
-      candidateVariantBias(right, ingestion) - candidateVariantBias(left, ingestion);
-    if (variantDelta !== 0) return variantDelta;
-
-    const confidenceDelta = right.confidence - left.confidence;
-    if (Math.abs(confidenceDelta) > 0.001) return confidenceDelta;
-
-    const traceDelta = right.evidence.traces.length - left.evidence.traces.length;
-    if (traceDelta !== 0) return traceDelta;
-
-    return left.title.localeCompare(right.title);
-  });
 }
 
 function dedupeRankedCandidates(
@@ -1638,13 +1710,12 @@ function enforceReviewPolicy(
   return verdict;
 }
 
-function primaryCandidateFromReport(
+function leadCandidateFromReport(
   report: AuditReport
 ): AuditFindingCandidate | undefined {
   return (
     report.candidateFindings?.find(
-      (candidate) =>
-        candidate.title === report.title && candidate.severity === report.severity
+      (candidate) => candidate.candidateId === report.leadCandidateId
     ) ?? report.candidateFindings?.[0]
   );
 }
@@ -1659,7 +1730,7 @@ function focusedReviewFiles(
 ): SourceFile[] {
   if (!ingestion) return [];
 
-  const primaryCandidate = primaryCandidateFromReport(report);
+  const primaryCandidate = leadCandidateFromReport(report);
   const directPaths = new Set(
     (report.affectedSurface ?? []).map(normalizeAffectedPath).filter(Boolean)
   );
@@ -1688,7 +1759,7 @@ function focusedNeighborhoodSummaries(
   report: AuditReport
 ): string[] {
   if (!ingestion) return [];
-  const primaryCandidate = primaryCandidateFromReport(report);
+  const primaryCandidate = leadCandidateFromReport(report);
   const ids = new Set(primaryCandidate?.neighborhoodIds ?? []);
   return ingestion.neighborhoods
     .filter((neighborhood) => ids.has(neighborhood.id))
@@ -1777,7 +1848,7 @@ function detectFrameworkProtections(
 }
 
 function buildReviewClaimSummary(report: AuditReport): string {
-  const primaryCandidate = primaryCandidateFromReport(report);
+  const primaryCandidate = leadCandidateFromReport(report);
   const topTraces = report.evidence.traces
     .slice(0, 3)
     .map(
@@ -2037,11 +2108,11 @@ export async function runAudit(
     )
     .join("\n\n");
 
-  let base = reportFromPrimaryCandidate(
+  let base = reportFromLeadCandidate(
     reportId,
     target.targetId,
-    baseCandidates[0],
-    baseCandidates
+    baseCandidates,
+    ingestion
   );
 
   try {
@@ -2163,11 +2234,11 @@ export async function runAudit(
         );
         const rankedCandidates = dedupeRankedCandidates(mergedCandidates, ingestion);
         if (rankedCandidates.length > 0) {
-          return reportFromPrimaryCandidate(
+          return reportFromLeadCandidate(
             reportId,
             target.targetId,
-            rankedCandidates[0],
-            rankedCandidates
+            rankedCandidates,
+            ingestion
           );
         }
       }
@@ -2419,6 +2490,136 @@ export async function runReview(
   return enforceReviewPolicy(report, fallback);
 }
 
+function candidateFromReportSummary(report: AuditReport): AuditFindingCandidate {
+  return {
+    candidateId: report.leadCandidateId ?? `${report.reportId}_lead`,
+    origin: "analyzer",
+    title: report.title,
+    severity: report.severity,
+    confidence: report.confidence,
+    description: report.description,
+    impact: report.impact,
+    whyFlagged: report.whyFlagged,
+    affectedSurface: report.affectedSurface,
+    recommendations: report.recommendations,
+    evidence: report.evidence,
+    poc: report.poc,
+  };
+}
+
+function candidatesFromReport(report: AuditReport): AuditFindingCandidate[] {
+  return report.candidateFindings?.length
+    ? report.candidateFindings
+    : [candidateFromReportSummary(report)];
+}
+
+function aggregateReviewVerdict(
+  reviewedCandidates: AuditFindingCandidate[],
+  ingestion?: IngestionResult
+): ReviewerVerdict {
+  const counts = findingCountsFromCandidates(reviewedCandidates) ?? {
+    total: reviewedCandidates.length,
+    published: 0,
+    needsHumanReview: 0,
+    discarded: 0,
+  };
+  const ordered = rankReviewedCandidates(reviewedCandidates, ingestion);
+  const lead = ordered[0];
+  const leadReview = lead?.review;
+
+  const outcomeSummary = `${counts.published} published, ${counts.needsHumanReview} queued for human review, ${counts.discarded} discarded`;
+  const leadSummary = lead
+    ? ` Lead finding: ${lead.title} (${lead.severity}).`
+    : "";
+  const leadRationale = leadReview?.rationale
+    ? ` Lead reviewer rationale: ${leadReview.rationale}`
+    : "";
+
+  if (counts.published > 0) {
+    return {
+      verdict: "publish",
+      rationale: `Reviewed ${counts.total} findings: ${outcomeSummary}.${leadSummary}${leadRationale}`.trim(),
+      confidence:
+        Math.max(
+          ...reviewedCandidates.map((candidate) => candidate.review?.confidence ?? 0)
+        ) || leadReview?.confidence || 0.55,
+    };
+  }
+
+  if (counts.needsHumanReview > 0) {
+    return {
+      verdict: "needs_human_review",
+      rationale: `Reviewed ${counts.total} findings: ${outcomeSummary}.${leadSummary}${leadRationale}`.trim(),
+      confidence:
+        Math.max(
+          ...reviewedCandidates
+            .filter((candidate) => candidate.review?.verdict === "needs_human_review")
+            .map((candidate) => candidate.review?.confidence ?? 0)
+        ) || leadReview?.confidence || 0.45,
+    };
+  }
+
+  return {
+    verdict: "discard",
+    rationale: `Reviewed ${counts.total} findings: ${outcomeSummary}.${leadSummary}${leadRationale}`.trim(),
+    confidence:
+      Math.max(
+        ...reviewedCandidates.map((candidate) => candidate.review?.confidence ?? 0)
+      ) || leadReview?.confidence || 0.3,
+  };
+}
+
+export async function runReviewFindings(
+  runtime: IAgentRuntime,
+  opts: {
+    target: Target;
+    report: AuditReport;
+    scopeContext?: unknown;
+    ingestion?: IngestionResult;
+  }
+): Promise<{
+  report: AuditReport;
+  verdict: ReviewerVerdict;
+  leadVerdict?: ReviewerVerdict;
+}> {
+  const { report, target, scopeContext, ingestion } = opts;
+  const candidates = candidatesFromReport(report);
+  const reviewedCandidates: AuditFindingCandidate[] = [];
+
+  for (const candidate of candidates) {
+    const candidateReport = reportFromSingleCandidate(
+      report.reportId,
+      report.targetId,
+      candidate
+    );
+    const verdict = await runReview(runtime, {
+      target,
+      report: candidateReport,
+      scopeContext,
+      ingestion,
+    });
+    reviewedCandidates.push({
+      ...candidate,
+      review: verdict,
+    });
+  }
+
+  const reviewedReport = reportFromLeadCandidate(
+    report.reportId,
+    report.targetId,
+    reviewedCandidates,
+    ingestion
+  );
+  const leadVerdict =
+    leadCandidateFromReport(reviewedReport)?.review ?? reviewedCandidates[0]?.review;
+
+  return {
+    report: reviewedReport,
+    verdict: aggregateReviewVerdict(reviewedCandidates, ingestion),
+    leadVerdict,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Run Audit — now with real code context
 // ---------------------------------------------------------------------------
@@ -2454,7 +2655,7 @@ export async function runAuditLegacy(
       "Automated review produced a candidate vulnerability. " +
       "This is a first-pass report and should be validated against the target's actual code paths and bounty scope.",
     impact:
-      "This compatibility path does not yet establish grounded exploitability and should be replaced by the primary evidence-first audit flow.",
+      "This compatibility path does not yet establish grounded exploitability and should be replaced by the reviewed multi-finding audit flow.",
     whyFlagged: ["Legacy compatibility path produced no grounded analyzer signal."],
     affectedSurface: [],
     recommendations: [
@@ -2533,9 +2734,9 @@ export async function runAuditLegacy(
     if (analysisContext) {
       promptParts.push(
         "IMPORTANT: The following STATIC ANALYSIS has already been performed on the source code.",
-        "These are GROUNDED evidence signals extracted by pattern analysis. USE THEM as the basis for your finding.",
-        "Pick the MOST EXPLOITABLE signal and develop it into a complete, defensible vulnerability report.",
-        "Do NOT ignore the static analysis to propose a different, ungrounded hypothesis.",
+        "These are GROUNDED evidence signals extracted by pattern analysis. Use them as high-value evidence, not as exclusive truth.",
+        "Cross-check them against the repo-index context and actual code before strengthening, reshaping, or rejecting a hypothesis.",
+        "Prefer the strongest grounded candidate for the lead summary, but do not force the report to mirror a weak seed if the code evidence points elsewhere.",
         "",
         analysisContext,
         ""
@@ -2555,7 +2756,7 @@ export async function runAuditLegacy(
     }
 
     promptParts.push(
-      "Produce ONE concrete vulnerability finding with:",
+      "Produce one legacy compatibility summary for the strongest candidate with:",
       "- title: a specific, descriptive title referencing actual files/functions and the vulnerability class",
       "- severity: low | medium | high | critical",
       "- description: detailed explanation with:",

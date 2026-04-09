@@ -3,7 +3,7 @@
 import React from "react";
 
 // ---------------------------------------------------------------------------
-// Types — mirrors backend AuditJob
+// Types â€” mirrors backend AuditJob
 // ---------------------------------------------------------------------------
 
 type AuditJobState =
@@ -82,6 +82,7 @@ type AuditFindingCandidate = {
   recommendations?: string[];
   evidence?: EvidenceBundle;
   poc?: { framework: string; text: string };
+  review?: ReviewerVerdict;
 };
 
 type AuditReport = {
@@ -97,7 +98,14 @@ type AuditReport = {
   recommendations?: string[];
   evidence?: EvidenceBundle;
   poc?: { framework: string; text: string };
+  leadCandidateId?: string;
   candidateFindings?: AuditFindingCandidate[];
+  findingCounts?: {
+    total: number;
+    published: number;
+    needsHumanReview: number;
+    discarded: number;
+  };
 };
 
 type ReviewerVerdict = {
@@ -204,8 +212,25 @@ type ScoutWatcherSnapshot = {
 };
 
 type IntakeMode = "github" | "local" | "immunefi";
+type FindingRankMode = "severity_then_confidence" | "confidence" | "severity";
+
+type FindingFeedEntry = {
+  key: string;
+  job: AuditJob;
+  candidate: AuditFindingCandidate;
+  verdict: ReviewerVerdict;
+  isLead: boolean;
+};
 
 const INTAKE_MODE_ORDER: IntakeMode[] = ["github", "local", "immunefi"];
+const FINDING_RANK_OPTIONS: Array<{
+  value: FindingRankMode;
+  label: string;
+}> = [
+  { value: "severity_then_confidence", label: "Severity + confidence" },
+  { value: "confidence", label: "Confidence" },
+  { value: "severity", label: "Severity" },
+];
 
 const INTAKE_MODE_COPY: Record<
   IntakeMode,
@@ -479,18 +504,155 @@ function formatDateTime(iso: string): string {
   }
 }
 
-function countArtifactEvidence(report?: AuditReport): string | null {
-  if (!report?.evidence) return null;
+function countArtifactEvidence(evidence?: EvidenceBundle): string | null {
+  if (!evidence) return null;
 
-  return `${report.evidence.traces.length} traces | ${report.evidence.artifacts.length} artifacts | ${report.evidence.reproduction.steps.length} replay steps`;
+  return `${evidence.traces.length} traces | ${evidence.artifacts.length} artifacts | ${evidence.reproduction.steps.length} replay steps`;
 }
 
 function candidateCount(report?: AuditReport): number {
   return report?.candidateFindings?.length ?? (report ? 1 : 0);
 }
 
-function primaryCandidate(report?: AuditReport): AuditFindingCandidate | undefined {
-  return report?.candidateFindings?.[0];
+function leadCandidate(report?: AuditReport): AuditFindingCandidate | undefined {
+  return (
+    report?.candidateFindings?.find(
+      (candidate) => candidate.candidateId === report.leadCandidateId
+    ) ?? report?.candidateFindings?.[0]
+  );
+}
+
+function fallbackLeadCandidate(report?: AuditReport): AuditFindingCandidate | undefined {
+  if (!report) return undefined;
+  if (report.candidateFindings?.length) return leadCandidate(report);
+
+  return {
+    candidateId: report.leadCandidateId ?? `${report.reportId}_lead`,
+    origin: "analyzer",
+    title: report.title,
+    severity: report.severity,
+    confidence: report.confidence ?? 0,
+    description: report.description,
+    impact: report.impact,
+    whyFlagged: report.whyFlagged ?? [],
+    affectedSurface: report.affectedSurface,
+    recommendations: report.recommendations,
+    evidence: report.evidence,
+    poc: report.poc,
+    review: undefined,
+  };
+}
+
+function findingCounts(report?: AuditReport): AuditReport["findingCounts"] {
+  if (report?.findingCounts) {
+    return report.findingCounts;
+  }
+
+  const candidates = report?.candidateFindings ?? [];
+  return {
+    total: candidates.length,
+    published: candidates.filter((candidate) => candidate.review?.verdict === "publish").length,
+    needsHumanReview: candidates.filter(
+      (candidate) => candidate.review?.verdict === "needs_human_review"
+    ).length,
+    discarded: candidates.filter((candidate) => candidate.review?.verdict === "discard").length,
+  };
+}
+
+function candidateVerdict(
+  job: AuditJob,
+  candidate: AuditFindingCandidate
+): ReviewerVerdict | undefined {
+  if (candidate.review) {
+    return candidate.review;
+  }
+
+  const lead = leadCandidate(job.report);
+  if (lead && candidate.candidateId === lead.candidateId) {
+    return job.verdict;
+  }
+
+  return undefined;
+}
+
+function findingEntries(job: AuditJob): FindingFeedEntry[] {
+  const candidates =
+    job.report?.candidateFindings?.length
+      ? job.report.candidateFindings
+      : fallbackLeadCandidate(job.report)
+        ? [fallbackLeadCandidate(job.report)!]
+        : [];
+  const lead = leadCandidate(job.report) ?? fallbackLeadCandidate(job.report);
+
+  return candidates
+    .map((candidate) => {
+      const verdict = candidateVerdict(job, candidate);
+      if (!verdict) return null;
+
+      return {
+        key: `${job.jobId}:${candidate.candidateId}`,
+        job,
+        candidate,
+        verdict,
+        isLead: Boolean(lead && candidate.candidateId === lead.candidateId),
+      } satisfies FindingFeedEntry;
+    })
+    .filter((entry): entry is FindingFeedEntry => Boolean(entry));
+}
+
+function severityValue(severity: AuditFindingCandidate["severity"]): number {
+  switch (severity) {
+    case "critical":
+      return 4;
+    case "high":
+      return 3;
+    case "medium":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
+function sortFindingEntries(
+  entries: FindingFeedEntry[],
+  mode: FindingRankMode
+): FindingFeedEntry[] {
+  return [...entries].sort((left, right) => {
+    if (left.isLead !== right.isLead) {
+      return left.isLead ? -1 : 1;
+    }
+
+    if (mode === "confidence") {
+      const confidenceDelta = right.candidate.confidence - left.candidate.confidence;
+      if (Math.abs(confidenceDelta) > 0.001) return confidenceDelta;
+      return severityValue(right.candidate.severity) - severityValue(left.candidate.severity);
+    }
+
+    if (mode === "severity") {
+      const severityDelta =
+        severityValue(right.candidate.severity) - severityValue(left.candidate.severity);
+      if (severityDelta !== 0) return severityDelta;
+      return right.candidate.confidence - left.candidate.confidence;
+    }
+
+    const severityDelta =
+      severityValue(right.candidate.severity) - severityValue(left.candidate.severity);
+    if (severityDelta !== 0) return severityDelta;
+    const confidenceDelta = right.candidate.confidence - left.candidate.confidence;
+    if (Math.abs(confidenceDelta) > 0.001) return confidenceDelta;
+    return right.verdict.confidence - left.verdict.confidence;
+  });
+}
+
+function leadFindingLabel(entry: FindingFeedEntry): string | null {
+  if (!entry.isLead) return null;
+  if (severityValue(entry.candidate.severity) >= severityValue("high")) {
+    return "most urgent";
+  }
+  if (entry.candidate.confidence >= 0.7) {
+    return "highest confidence";
+  }
+  return "lead finding";
 }
 
 function clipSentence(value?: string, max = 180): string {
@@ -502,26 +664,26 @@ function clipSentence(value?: string, max = 180): string {
 
 function outcomeDrivers(job: AuditJob): string[] {
   const drivers: string[] = [];
-  const primary = primaryCandidate(job.report);
-  const candidateTotal = candidateCount(job.report);
+  const lead = leadCandidate(job.report);
+  const counts = findingCounts(job.report);
 
-  if (primary?.origin) {
-    drivers.push(`Discovery source: ${originLabel(primary.origin)}.`);
+  if (lead?.origin) {
+    drivers.push(`Discovery source: ${originLabel(lead.origin)}.`);
   }
 
   if (job.report?.evidence) {
     if (job.report.evidence.meetsSeverityBar) {
-      drivers.push(`Evidence bar cleared with ${proofLabel(job.report.evidence.proofLevel)}.`);
+      drivers.push(`Lead finding cleared the evidence bar with ${proofLabel(job.report.evidence.proofLevel)}.`);
     } else {
       drivers.push(
-        `Evidence bar not cleared because proof is only ${proofLabel(job.report.evidence.proofLevel)}.`
+        `Lead finding is still below the evidence bar because proof is only ${proofLabel(job.report.evidence.proofLevel)}.`
       );
     }
   }
 
-  if (candidateTotal > 1) {
+  if ((counts?.total ?? 0) > 0) {
     drivers.push(
-      `${candidateTotal - 1} additional candidate${candidateTotal - 1 === 1 ? "" : "s"} preserved for comparison.`
+      `${counts?.published ?? 0} published, ${counts?.needsHumanReview ?? 0} held for human review, ${counts?.discarded ?? 0} discarded.`
     );
   }
 
@@ -710,23 +872,25 @@ function LifecycleBar({ job }: { job: AuditJob }) {
 
 function CandidateFindingCard({
   candidate,
-  primary = false,
+  lead = false,
+  review,
+  leadLabel,
 }: {
   candidate: AuditFindingCandidate;
-  primary?: boolean;
+  lead?: boolean;
+  review?: ReviewerVerdict;
+  leadLabel?: string | null;
 }) {
   const evidence = candidate.evidence;
-  const counts = evidence
-    ? `${evidence.traces.length} traces | ${evidence.artifacts.length} artifacts | ${evidence.reproduction.steps.length} replay steps`
-    : null;
+  const counts = countArtifactEvidence(evidence);
 
   return (
     <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {primary && (
+          {lead && (
             <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
-              primary
+              {leadLabel ?? "lead finding"}
             </span>
           )}
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${severityTone(candidate.severity)}`}>
@@ -751,10 +915,22 @@ function CandidateFindingCard({
               {evidence.meetsSeverityBar ? "bar cleared" : "bar not cleared"}
             </span>
           )}
+          {review && (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${verdictTone(review.verdict)}`}>
+              {review.verdict.replace(/_/g, " ")}
+            </span>
+          )}
         </div>
-        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${confidenceTone(candidate.confidence)}`}>
-          auditor {formatPercent(candidate.confidence)}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${confidenceTone(candidate.confidence)}`}>
+            auditor {formatPercent(candidate.confidence)}
+          </span>
+          {review && (
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${confidenceTone(review.confidence)}`}>
+              reviewer {formatPercent(review.confidence)}
+            </span>
+          )}
+        </div>
       </div>
 
       <h4 className="mt-3 text-sm font-semibold text-slate-100">{candidate.title}</h4>
@@ -792,6 +968,13 @@ function CandidateFindingCard({
         </div>
       )}
 
+      {review?.rationale && (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Reviewer Outcome</p>
+          <p className="mt-2 text-sm leading-6 text-slate-300">{review.rationale}</p>
+        </div>
+      )}
+
       {(candidate.neighborhoodIds?.length || candidate.affectedSurface?.length) && (
         <div className="mt-3 flex flex-wrap gap-2">
           {(candidate.neighborhoodIds ?? []).slice(0, 4).map((id) => (
@@ -816,6 +999,79 @@ function CandidateFindingCard({
   );
 }
 
+function FindingResultCard({
+  entry,
+  onOpen,
+}: {
+  entry: FindingFeedEntry;
+  onOpen: (job: AuditJob) => void;
+}) {
+  const { job, candidate, verdict, isLead } = entry;
+  const leadLabel = leadFindingLabel(entry);
+  const evidenceSummary = countArtifactEvidence(candidate.evidence);
+
+  return (
+    <article
+      className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30 cursor-pointer transition hover:border-cyan-400/20"
+      onClick={() => onOpen(job)}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {isLead && leadLabel && (
+            <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
+              {leadLabel}
+            </span>
+          )}
+          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(candidate.severity)}`}>
+            {candidate.severity}
+          </span>
+          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${verdictTone(verdict.verdict)}`}>
+            {verdict.verdict.replace(/_/g, " ")}
+          </span>
+          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(candidate.origin)}`}>
+            {originLabel(candidate.origin)}
+          </span>
+          {candidate.evidence && (
+            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(candidate.evidence.proofLevel)}`}>
+              {proofLabel(candidate.evidence.proofLevel)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${confidenceTone(candidate.confidence)}`}>
+            auditor {formatPercent(candidate.confidence)}
+          </span>
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${confidenceTone(verdict.confidence)}`}>
+            reviewer {formatPercent(verdict.confidence)}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <h3 className="text-lg font-semibold text-white">{candidate.title}</h3>
+        <span className="text-xs text-slate-500">{job.target.displayName}</span>
+      </div>
+
+      {candidate.evidence && (
+        <p className="mt-3 text-xs uppercase tracking-[0.2em] text-cyan-300">
+          {candidate.evidence.summary}
+        </p>
+      )}
+      {evidenceSummary && (
+        <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">
+          {evidenceSummary}
+        </p>
+      )}
+      <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
+        {candidate.description}
+      </p>
+      <p className="mt-3 text-xs leading-5 text-slate-500 line-clamp-3">
+        {clipSentence(verdict.rationale, 220)}
+      </p>
+    </article>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Job detail modal
 // ---------------------------------------------------------------------------
@@ -827,9 +1083,15 @@ function JobDetailPanel({
   job: AuditJob;
   onClose: () => void;
 }) {
-  const candidates = job.report?.candidateFindings ?? [];
-  const primary = primaryCandidate(job.report);
+  const candidates =
+    job.report?.candidateFindings?.length
+      ? job.report.candidateFindings
+      : fallbackLeadCandidate(job.report)
+        ? [fallbackLeadCandidate(job.report)!]
+        : [];
+  const lead = leadCandidate(job.report) ?? fallbackLeadCandidate(job.report);
   const drivers = outcomeDrivers(job);
+  const counts = findingCounts(job.report);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
@@ -893,17 +1155,20 @@ function JobDetailPanel({
         {job.report && (
           <div className="mt-6 space-y-4">
             <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-lg font-semibold text-white">Audit Report</h3>
+              <h3 className="text-lg font-semibold text-white">Lead Finding Summary</h3>
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${severityTone(job.report.severity)}`}>
                 {job.report.severity}
               </span>
-              {primary?.origin && (
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${originTone(primary.origin)}`}>
-                  {originLabel(primary.origin)}
+              {lead?.origin && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${originTone(lead.origin)}`}>
+                  {originLabel(lead.origin)}
                 </span>
               )}
               <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
                 {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
+              </span>
+              <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
+                {counts?.published ?? 0} publish | {counts?.needsHumanReview ?? 0} review | {counts?.discarded ?? 0} discard
               </span>
               {typeof job.report.confidence === "number" && (
                 <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${confidenceTone(job.report.confidence)}`}>
@@ -993,7 +1258,19 @@ function JobDetailPanel({
                     <CandidateFindingCard
                       key={candidate.candidateId ?? `${candidate.title}-${index}`}
                       candidate={candidate}
-                      primary={index === 0}
+                      lead={candidate.candidateId === job.report?.leadCandidateId || (!job.report?.leadCandidateId && index === 0)}
+                      leadLabel={
+                        (candidate.candidateId === job.report?.leadCandidateId || (!job.report?.leadCandidateId && index === 0))
+                          ? leadFindingLabel({
+                              key: `${job.jobId}:${candidate.candidateId}`,
+                              job,
+                              candidate,
+                              verdict: candidate.review ?? job.verdict ?? { verdict: "needs_human_review", rationale: "", confidence: 0.5 },
+                              isLead: true,
+                            })
+                          : null
+                      }
+                      review={candidate.review ?? (candidate.candidateId === job.report?.leadCandidateId ? job.verdict : undefined)}
                     />
                   ))}
                 </div>
@@ -1120,7 +1397,7 @@ function JobDetailPanel({
         {job.verdict && (
           <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/80 p-5">
             <div className="flex items-center gap-3 mb-3">
-              <h3 className="text-lg font-semibold text-white">Reviewer Verdict</h3>
+              <h3 className="text-lg font-semibold text-white">Aggregate Review Outcome</h3>
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${verdictTone(job.verdict.verdict)}`}>
                 {job.verdict.verdict.replace(/_/g, " ")}
               </span>
@@ -1275,6 +1552,8 @@ export default function Home() {
   const [scout, setScout] = React.useState<ScoutWatcherSnapshot | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
+  const [findingRankMode, setFindingRankMode] =
+    React.useState<FindingRankMode>("severity_then_confidence");
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const roomId = "00000000-0000-0000-0000-000000000000";
   const intakeCopy = INTAKE_MODE_COPY[targetMode];
@@ -1306,6 +1585,14 @@ export default function Home() {
     const id = setInterval(() => void refresh(), 3000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  React.useEffect(() => {
+    if (!selectedJob) return;
+    const refreshed = jobs.find((job) => job.jobId === selectedJob.jobId);
+    if (refreshed) {
+      setSelectedJob(refreshed);
+    }
+  }, [jobs, selectedJob]);
 
   // Also refresh selected job
   React.useEffect(() => {
@@ -1481,6 +1768,21 @@ export default function Home() {
   const needsHumanReviewJobs = orderedJobs.filter((j) => j.state === "needs_human_review");
   const discardedJobs = orderedJobs.filter((j) => j.state === "discarded");
   const failedJobs = orderedJobs.filter((j) => j.state === "failed");
+  const reviewedEntries = orderedJobs.flatMap((job) => findingEntries(job));
+  const publishedFindings = sortFindingEntries(
+    reviewedEntries.filter((entry) => entry.verdict.verdict === "publish"),
+    findingRankMode
+  );
+  const needsHumanReviewFindings = sortFindingEntries(
+    reviewedEntries.filter(
+      (entry) => entry.verdict.verdict === "needs_human_review"
+    ),
+    findingRankMode
+  );
+  const discardedFindings = sortFindingEntries(
+    reviewedEntries.filter((entry) => entry.verdict.verdict === "discard"),
+    findingRankMode
+  );
 
   const pipelineJobs = [...pendingJobs, ...approvedJobs, ...activeJobs];
   const recentTransitions = orderedJobs
@@ -1627,7 +1929,7 @@ export default function Home() {
                 onClick={() => void submitTarget()}
                 className="rounded-2xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
               >
-                {busy ? "Working…" : "Queue Target"}
+                {busy ? "Working..." : "Queue Target"}
               </button>
             </div>
           </div>
@@ -1680,7 +1982,7 @@ export default function Home() {
             ))
           ) : (
             <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 text-sm text-slate-400 lg:col-span-3">
-              Waiting for the backend readiness snapshot…
+              Waiting for the backend readiness snapshot...
             </article>
           )}
         </section>
@@ -2084,235 +2386,73 @@ export default function Home() {
 
           {/* Results column */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-white">Findings</h2>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
-                {publishedJobs.length} published · {discardedJobs.length} discarded
-              </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-white">Findings</h2>
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                  {publishedFindings.length} published · {needsHumanReviewFindings.length} human review · {discardedFindings.length} discarded
+                </p>
+              </div>
+              <label className="flex flex-col gap-2 text-right">
+                <span className="text-[11px] uppercase tracking-[0.25em] text-slate-500">
+                  Rank by
+                </span>
+                <select
+                  value={findingRankMode}
+                  onChange={(e) => setFindingRankMode(e.target.value as FindingRankMode)}
+                  className="rounded-2xl border border-white/10 bg-slate-950/80 px-3 py-2 text-xs font-semibold uppercase tracking-[0.15em] text-slate-200 outline-none transition focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50"
+                >
+                  {FINDING_RANK_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-900/50 px-4 py-3 text-xs uppercase tracking-[0.25em] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
               <span>
-                {publishedJobs.length} published | {needsHumanReviewJobs.length} awaiting analyst review | {discardedJobs.length} discarded
+                {reviewedEntries.length} reviewed findings across {publishedJobs.length + needsHumanReviewJobs.length + discardedJobs.length} completed jobs
               </span>
-              <span className="text-slate-600">Open any card for candidates, provenance, proof state, downgrade reasons, and timeline</span>
+              <span className="text-slate-600">Open any finding to drill into the full job, ranked candidates, proof state, and reviewer reasoning</span>
             </div>
 
-            {publishedJobs.length > 0 ? (
-              publishedJobs.slice(0, 8).map((job) => {
-                const primary = primaryCandidate(job.report);
-                const drivers = outcomeDrivers(job);
-                return (
-                  <article
-                    key={job.jobId}
-                    className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30 cursor-pointer hover:border-emerald-400/20 transition"
-                    onClick={() => setSelectedJob(job)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "high")}`}>
-                          {job.report?.severity ?? "high"}
-                        </span>
-                        {job.report?.evidence && (
-                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
-                            {proofLabel(job.report.evidence.proofLevel)}
-                          </span>
-                        )}
-                        {primary?.origin && (
-                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(primary.origin)}`}>
-                            {originLabel(primary.origin)}
-                          </span>
-                        )}
-                        <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-300">
-                          {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {job.report && typeof job.report.confidence === "number" && (
-                          <span className="text-xs text-cyan-300">
-                            auditor {formatPercent(job.report.confidence)}
-                          </span>
-                        )}
-                        {job.verdict && (
-                          <span className="text-xs text-emerald-400">
-                            reviewer {formatPercent(job.verdict.confidence)}
-                          </span>
-                        )}
-                        <span className="text-xs text-slate-500">{job.target.displayName}</span>
-                      </div>
-                    </div>
-                    <h3 className="mt-4 text-lg font-semibold text-white">
-                      {job.report?.title ?? "Finding"}
-                    </h3>
-                    {job.report?.evidence && (
-                      <p className="mt-3 text-xs uppercase tracking-[0.2em] text-cyan-300">
-                        {job.report.evidence.summary}
-                      </p>
-                    )}
-                    {countArtifactEvidence(job.report) && (
-                      <p className="mt-3 text-xs uppercase tracking-[0.2em] text-slate-500">
-                        {countArtifactEvidence(job.report)}
-                      </p>
-                    )}
-                    <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
-                      {job.report?.description ?? ""}
-                    </p>
-                    {drivers.length > 0 && (
-                      <p className="mt-3 text-xs leading-5 text-slate-500 line-clamp-3">
-                        {drivers.join(" | ")}
-                      </p>
-                    )}
-                    {job.verdict && (
-                      <div className="mt-3 flex items-center gap-2">
-                        <div className="h-1 flex-1 rounded-full bg-slate-800 overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-emerald-400 transition-all duration-500"
-                            style={{ width: `${Math.round(job.verdict.confidence * 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-[10px] text-slate-500 whitespace-nowrap">
-                          reviewer confidence
-                        </span>
-                      </div>
-                    )}
-                  </article>
-                );
-              })
+            {publishedFindings.length > 0 ? (
+              publishedFindings.slice(0, 10).map((entry) => (
+                <FindingResultCard key={entry.key} entry={entry} onOpen={setSelectedJob} />
+              ))
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
                 Published findings will appear here after a target completes the full golden path: submit → approve → audit → review.
               </article>
             )}
 
-            {needsHumanReviewJobs.length > 0 && (
+            {needsHumanReviewFindings.length > 0 && (
               <>
                 <div className="flex items-center gap-3 mt-4">
                   <h3 className="text-base font-semibold text-amber-300">Needs Human Review</h3>
                   <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
-                    {needsHumanReviewJobs.length}
+                    {needsHumanReviewFindings.length}
                   </span>
                 </div>
-                {needsHumanReviewJobs.slice(0, 6).map((job) => {
-                  const primary = primaryCandidate(job.report);
-                  const drivers = outcomeDrivers(job);
-                  return (
-                    <article
-                      key={job.jobId}
-                      className="rounded-2xl border border-amber-500/20 bg-slate-900/70 p-5 cursor-pointer hover:border-amber-400/40 transition"
-                      onClick={() => setSelectedJob(job)}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${severityTone(job.report?.severity ?? "medium")}`}>
-                            {job.report?.severity ?? "medium"}
-                          </span>
-                          <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
-                            analyst review
-                          </span>
-                          {job.report?.evidence && (
-                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${proofTone(job.report.evidence.proofLevel)}`}>
-                              {proofLabel(job.report.evidence.proofLevel)}
-                            </span>
-                          )}
-                          {primary?.origin && (
-                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(primary.origin)}`}>
-                              {originLabel(primary.origin)}
-                            </span>
-                          )}
-                          <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-300">
-                            {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {job.verdict && (
-                            <span className="text-xs text-amber-300">
-                              reviewer {formatPercent(job.verdict.confidence)}
-                            </span>
-                          )}
-                          <span className="text-xs text-slate-500">{job.target.displayName}</span>
-                        </div>
-                      </div>
-                      <h3 className="mt-4 text-lg font-semibold text-white">
-                        {job.report?.title ?? "Candidate finding"}
-                      </h3>
-                      {countArtifactEvidence(job.report) && (
-                        <p className="mt-3 text-xs uppercase tracking-[0.2em] text-amber-300">
-                          {countArtifactEvidence(job.report)}
-                        </p>
-                      )}
-                      <p className="mt-3 text-sm leading-6 text-slate-400 line-clamp-3">
-                        {job.verdict?.rationale ?? job.report?.description ?? ""}
-                      </p>
-                      {drivers.length > 0 && (
-                        <p className="mt-3 text-xs leading-5 text-amber-200/80 line-clamp-3">
-                          {drivers.join(" | ")}
-                        </p>
-                      )}
-                    </article>
-                  );
-                })}
+                {needsHumanReviewFindings.slice(0, 8).map((entry) => (
+                  <FindingResultCard key={entry.key} entry={entry} onOpen={setSelectedJob} />
+                ))}
               </>
             )}
 
-            {/* Discarded findings */}
-            {discardedJobs.length > 0 && (
+            {discardedFindings.length > 0 && (
               <>
                 <div className="flex items-center gap-3 mt-4">
                   <h3 className="text-base font-semibold text-slate-400">Discarded by Reviewer</h3>
                   <span className="rounded-full border border-slate-500/30 bg-slate-500/10 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
-                    {discardedJobs.length}
+                    {discardedFindings.length}
                   </span>
                 </div>
-                {discardedJobs.slice(0, 4).map((job) => {
-                  const primary = primaryCandidate(job.report);
-                  const drivers = outcomeDrivers(job);
-                  return (
-                    <article
-                      key={job.jobId}
-                      className="rounded-2xl border border-white/5 bg-slate-900/50 p-4 cursor-pointer hover:border-white/10 transition opacity-70"
-                      onClick={() => setSelectedJob(job)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="text-sm font-medium text-slate-300">
-                              {job.report?.title ?? job.target.displayName}
-                            </h4>
-                            {primary?.origin && (
-                              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${originTone(primary.origin)}`}>
-                                {originLabel(primary.origin)}
-                              </span>
-                            )}
-                            <span className="rounded-full border border-white/10 bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                              {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
-                            </span>
-                          </div>
-                          {job.report?.evidence && (
-                            <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                              {proofLabel(job.report.evidence.proofLevel)} evidence
-                            </p>
-                          )}
-                          {countArtifactEvidence(job.report) && (
-                            <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-slate-600">
-                              {countArtifactEvidence(job.report)}
-                            </p>
-                          )}
-                          <p className="mt-1 text-xs text-slate-500">
-                            {clipSentence(job.verdict?.rationale, 120)}
-                          </p>
-                          {drivers.length > 0 && (
-                            <p className="mt-2 text-[11px] leading-5 text-slate-600 line-clamp-3">
-                              {drivers.join(" | ")}
-                            </p>
-                          )}
-                        </div>
-                        <span className="text-xs text-slate-600">
-                          {job.verdict ? `${Math.round(job.verdict.confidence * 100)}%` : ""}
-                        </span>
-                      </div>
-                    </article>
-                  );
-                })}
+                {discardedFindings.slice(0, 6).map((entry) => (
+                  <FindingResultCard key={entry.key} entry={entry} onOpen={setSelectedJob} />
+                ))}
               </>
             )}
           </div>

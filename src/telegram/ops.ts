@@ -124,12 +124,36 @@ export async function sendTelegramAlert(
   };
 
   try {
+    await ensureTelegramSendHandler(runtime);
     await runtime.sendMessageToTarget(targetInfo, { text });
     return true;
   } catch (error) {
     logger.warn(`[TelegramOps] Failed to send Telegram alert: ${error}`);
     return false;
   }
+}
+
+async function ensureTelegramSendHandler(runtime: IAgentRuntime): Promise<void> {
+  const runtimeAny = runtime as any;
+  const sendHandlers = runtimeAny?.sendHandlers;
+  if (sendHandlers instanceof Map && sendHandlers.has("telegram")) {
+    return;
+  }
+
+  const telegramService = await runtime.getService("telegram" as any);
+  if (!telegramService) {
+    logger.warn("[TelegramOps] Telegram service is not available on this runtime.");
+    return;
+  }
+
+  const sendFn = (telegramService as any).handleSendMessage;
+  if (typeof sendFn !== "function") {
+    logger.warn("[TelegramOps] Telegram service does not expose a send handler.");
+    return;
+  }
+
+  runtime.registerSendHandler("telegram", sendFn.bind(telegramService));
+  logger.info("[TelegramOps] Registered Telegram send handler on demand.");
 }
 
 export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string {

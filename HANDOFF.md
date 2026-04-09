@@ -100,10 +100,14 @@ The following important local/source changes were reconciled:
 - The operator console now surfaces ranked candidate findings inside the job-detail modal, shows discovery provenance (`analyzer`, `exploration`, `analyzer+exploration`), displays candidate counts on finding cards, and explains publish / human-review / discard outcomes through explicit outcome-driver summaries instead of relying on implicit reviewer text alone
 - The operator-facing intake UX is restored again: the UI now exposes explicit `GitHub Repo`, `Local Folder`, and `Immunefi Project` modes with mode-specific validation and demo presets, while backend target parsing still accepts plain `owner/repo` input and absolute local-folder paths
 - Telegram HITL is re-enabled in the local environment; readiness now reports Telegram as `ready` and backend startup logs show the Telegram bot plugin starting again
+- Telegram proactive delivery is no longer blocked by the old missing-send-handler bug: `src/telegram/ops.ts` now self-registers the Telegram send handler on demand, and live Scout refresh logs show outbound messages being sent to the configured alert chat
 - The Scout UI is now explicitly labeled as project-level discovery only; it should not be presented as asset-level Immunefi scope expansion until the watcher can explode per-project assets/docs/repos properly
 - Model readiness is no longer boot-time-only: `src/readiness.ts` and `src/plugins/plugin-ui-bridge/index.ts` now refresh the model probe live for the readiness panel and again right before audits start
 - Audit launch is now asynchronous at the backend, so `/vigilance/audit` accepts the job quickly and the scan/review lifecycle continues in the background instead of holding one request open through the whole run
 - Controlled Solana demo suppression is stronger now: paired `secure` reference examples are filtered out of ranked candidates for repos like `sealevel-attacks`, and opposite `secure` / `insecure` variants no longer merge into the same finding during dedupe
+- The stale Scout-only auditor instruction has been removed from both `characters/auditor.character.json` and the live enrichment prompt in `src/pipeline/audit.ts`, so the auditor is no longer told to mirror Scout rules exclusively or force every final report to inherit weak seeded hypotheses
+- Candidate-level review is now first-class: each candidate finding carries its own reviewer verdict, job state is aggregated across all reviewed candidates, and the top-level report / verdict are derived lead summaries instead of the only source of truth
+- The operator console findings gallery is now flattened by reviewed finding instead of one job-primary card, with ranking controls plus `lead finding` / `most urgent` labeling so the full reviewed finding set is visible on the main screen
 
 ### Important note about earlier failures
 

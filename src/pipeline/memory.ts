@@ -35,6 +35,14 @@ function reproductionSummary(report: AuditReport): string {
   return report.evidence.reproduction.steps.slice(0, 3).join(" -> ");
 }
 
+function findingSummary(report: AuditReport): string {
+  if (!report.findingCounts) {
+    return "1 reviewed finding.";
+  }
+
+  return `${report.findingCounts.total} reviewed findings (${report.findingCounts.published} published, ${report.findingCounts.needsHumanReview} needs human review, ${report.findingCounts.discarded} discarded).`;
+}
+
 export async function createDocumentMemory(
   runtime: IAgentRuntime,
   input: DocumentMemoryInput
@@ -114,6 +122,7 @@ export async function writeAudit(
     `Title: ${report.title}`,
     `Severity: ${report.severity}`,
     `Auditor Confidence: ${formatPercent(report.confidence)}`,
+    `Finding Summary: ${findingSummary(report)}`,
     `Proof Level: ${proofLabel(report)}`,
     `Evidence: ${report.evidence.summary}`,
     `Impact: ${report.impact}`,
@@ -155,6 +164,7 @@ export async function writeReview(
     `Target: ${target.displayName}`,
     `Title: ${report.title}`,
     `Severity: ${report.severity}`,
+    `Finding Summary: ${findingSummary(report)}`,
     `Proof Level: ${proofLabel(report)}`,
     `Verdict: ${verdict.verdict}`,
     `Reviewer Confidence: ${formatPercent(verdict.confidence)}`,
@@ -195,6 +205,7 @@ export async function writeFinding(
     `Title: ${report.title}`,
     `Severity: ${report.severity}`,
     `Auditor Confidence: ${formatPercent(report.confidence)}`,
+    `Finding Summary: ${findingSummary(report)}`,
     `Reviewer Confidence: ${formatPercent(verdict.confidence)}`,
     `Proof Level: ${proofLabel(report)}`,
     `Evidence: ${report.evidence.summary}`,

@@ -72,7 +72,14 @@ export type AuditReport = {
     framework: PocFramework;
     text: string;
   };
+  leadCandidateId?: string;
   candidateFindings?: AuditFindingCandidate[];
+  findingCounts?: {
+    total: number;
+    published: number;
+    needsHumanReview: number;
+    discarded: number;
+  };
 };
 
 export type AuditFindingCandidate = {
@@ -93,6 +100,7 @@ export type AuditFindingCandidate = {
     framework: PocFramework;
     text: string;
   };
+  review?: ReviewerVerdict;
 };
 
 export type ReviewerVerdict = {

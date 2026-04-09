@@ -54,7 +54,7 @@ flowchart TD
     D --> F["LLM auditor"]
     E --> F
     F --> G["Ranked candidate findings"]
-    G --> H["Reviewer + policy gate"]
+    G --> H["Independent review per candidate + policy gate"]
     H --> I["Published / needs_human_review / discarded"]
 ```
 
@@ -66,8 +66,9 @@ flowchart TD
 - The engine now also runs an exploratory neighborhood pass from the repo index, so analyzers no longer fully define the search space.
 - A missed file or missed signal can become a missed finding.
 - We now preserve multiple candidate findings and track whether they came from analyzers, exploration, or both.
+- Candidate findings are now reviewed individually, and the job-level outcome is derived from the full reviewed finding set rather than from one canonical report only.
 - Proof labels are now more honest, and replay artifacts are now repo-anchored guided harnesses, but they are still not validated or executed proof.
-- The operator UI now exposes candidate provenance, candidate counts, and verdict drivers so review outcomes are understandable instead of hidden inside raw reviewer prose.
+- The operator UI now exposes candidate provenance, candidate counts, per-finding verdicts, lead/urgency labeling, and a findings gallery flattened by reviewed finding instead of by job-primary summary.
 
 ## 3. Why The Current Version Was Built This Way
 
