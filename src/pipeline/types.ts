@@ -299,6 +299,7 @@ export type AuditJob = {
   target: Target;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
   stateHistory: StateTransition[];
 
   // Populated during lifecycle

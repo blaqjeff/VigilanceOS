@@ -12,6 +12,7 @@ const DEFAULT_ROOM_ID = "00000000-0000-0000-0000-000000000000";
 const DEFAULT_SCOUT_POLL_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_PROJECTS_PER_CATEGORY = 2;
 const RECENT_DISCOVERY_LIMIT = 12;
+const PROJECT_RESOURCE_FIELDS = ["resources", "website", "url", "details"] as const;
 
 export type ScoutMode = "DEMO" | "LIVE";
 export type ScoutWatcherStatus = "idle" | "scheduled" | "running" | "blocked" | "error";
@@ -24,6 +25,21 @@ export type ScoutCategoryConfig = {
   key: ScoutCategoryKey;
   label: string;
   queries: string[];
+};
+
+export type ScoutProjectAsset = {
+  assetId: string;
+  label: string;
+  categoryLabel: string;
+  url?: string;
+  impactSummary: string[];
+  tags: string[];
+};
+
+export type ScoutProjectResource = {
+  label: string;
+  url: string;
+  sourceField?: string;
 };
 
 export type ScoutData = {
@@ -42,6 +58,13 @@ export type ScoutData = {
   maxBounty?: unknown;
   maxBountyText?: string;
   githubRepositories: string[];
+  primaryRepository?: string;
+  projectAssets: ScoutProjectAsset[];
+  projectResources: ScoutProjectResource[];
+  assetCount: number;
+  impactCount: number;
+  repositoryCount: number;
+  resourceCount: number;
   telegramRoomId?: string;
   telegramChannelId?: string;
 };
@@ -57,6 +80,13 @@ export type ScoutDiscovery = {
   categoryLabel: string;
   categoryTags: string[];
   githubRepositories: string[];
+  primaryRepository?: string;
+  projectAssets: ScoutProjectAsset[];
+  projectResources: ScoutProjectResource[];
+  assetCount: number;
+  impactCount: number;
+  repositoryCount: number;
+  resourceCount: number;
   rewardSummary: string[];
   scopeSummary: string[];
   maxBountyText?: string;
@@ -72,6 +102,9 @@ export type ScoutWatcherCategorySnapshot = {
   label: string;
   queries: string[];
   discoveredCount: number;
+  assetCount: number;
+  repositoryCount: number;
+  resourceCount: number;
   newDiscoveries: number;
   lastRunMatches: number;
   lastRunAt?: string;
@@ -176,6 +209,28 @@ const DEMO_PROJECTS: Array<
     maxBounty: "Controlled demo target",
     maxBountyText: "Controlled demo target",
     githubRepositories: ["https://github.com/coral-xyz/sealevel-attacks"],
+    primaryRepository: "https://github.com/coral-xyz/sealevel-attacks",
+    projectAssets: [
+      {
+        assetId: "demo-solana-asset-1",
+        label: "Sealevel attack programs",
+        categoryLabel: "Blockchain / DLT",
+        url: "https://github.com/coral-xyz/sealevel-attacks",
+        impactSummary: ["Signer misuse", "PDA misuse", "CPI privilege escalation"],
+        tags: ["Solana", "Rust"],
+      },
+    ],
+    projectResources: [
+      {
+        label: "GitHub repository",
+        url: "https://github.com/coral-xyz/sealevel-attacks",
+        sourceField: "repo",
+      },
+    ],
+    assetCount: 1,
+    impactCount: 3,
+    repositoryCount: 1,
+    resourceCount: 1,
   },
   {
     scoutMode: "DEMO",
@@ -191,6 +246,28 @@ const DEMO_PROJECTS: Array<
     maxBounty: "Controlled demo target",
     maxBountyText: "Controlled demo target",
     githubRepositories: ["https://github.com/theredguild/damn-vulnerable-defi"],
+    primaryRepository: "https://github.com/theredguild/damn-vulnerable-defi",
+    projectAssets: [
+      {
+        assetId: "demo-evm-asset-1",
+        label: "Damn Vulnerable DeFi contracts",
+        categoryLabel: "Smart Contract",
+        url: "https://github.com/theredguild/damn-vulnerable-defi",
+        impactSummary: ["Access control", "Oracle manipulation", "Accounting flaws"],
+        tags: ["Solidity", "EVM"],
+      },
+    ],
+    projectResources: [
+      {
+        label: "GitHub repository",
+        url: "https://github.com/theredguild/damn-vulnerable-defi",
+        sourceField: "repo",
+      },
+    ],
+    assetCount: 1,
+    impactCount: 3,
+    repositoryCount: 1,
+    resourceCount: 1,
   },
   {
     scoutMode: "DEMO",
@@ -206,6 +283,28 @@ const DEMO_PROJECTS: Array<
     maxBounty: "Controlled demo target",
     maxBountyText: "Controlled demo target",
     githubRepositories: ["https://github.com/juice-shop/juice-shop"],
+    primaryRepository: "https://github.com/juice-shop/juice-shop",
+    projectAssets: [
+      {
+        assetId: "demo-web-asset-1",
+        label: "Juice Shop web application",
+        categoryLabel: "Websites and Applications",
+        url: "https://github.com/juice-shop/juice-shop",
+        impactSummary: ["Auth flaws", "Secrets exposure", "Business logic abuse"],
+        tags: ["Node.js", "Web App"],
+      },
+    ],
+    projectResources: [
+      {
+        label: "GitHub repository",
+        url: "https://github.com/juice-shop/juice-shop",
+        sourceField: "repo",
+      },
+    ],
+    assetCount: 1,
+    impactCount: 3,
+    repositoryCount: 1,
+    resourceCount: 1,
   },
 ];
 
@@ -230,6 +329,41 @@ const watcherState: Omit<ScoutWatcherSnapshot, "categories" | "recentDiscoveries
     totalNewDiscoveries: 0,
     readiness: readinessSummary(),
   };
+
+function runtimeHasMcpService(runtime: IAgentRuntime | null | undefined): boolean {
+  if (!runtime?.getService) {
+    return false;
+  }
+
+  try {
+    return Boolean(runtime.getService("mcp" as any));
+  } catch {
+    return false;
+  }
+}
+
+function adoptWatcherRuntime(candidate?: IAgentRuntime) {
+  if (!candidate) {
+    return;
+  }
+
+  if (!watcherRuntime) {
+    watcherRuntime = candidate;
+    return;
+  }
+
+  if (currentScoutMode() === "LIVE") {
+    if (runtimeHasMcpService(watcherRuntime)) {
+      return;
+    }
+    if (runtimeHasMcpService(candidate)) {
+      watcherRuntime = candidate;
+      return;
+    }
+  }
+
+  watcherRuntime = candidate;
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
@@ -489,6 +623,150 @@ function maxBountyText(value: unknown): string | undefined {
   return shortList(value, 1)[0];
 }
 
+function extractUrls(value: unknown, limit = 12): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const queue: unknown[] = [value];
+  const urlPattern = /https?:\/\/[^\s"'<>]+/gi;
+
+  while (queue.length > 0 && out.length < limit) {
+    const current = queue.shift();
+    if (current == null) continue;
+
+    if (typeof current === "string") {
+      const matches = current.match(urlPattern) ?? [];
+      for (const match of matches) {
+        const normalized = match.replace(/[),.;]+$/, "");
+        if (!normalized || seen.has(normalized.toLowerCase())) continue;
+        seen.add(normalized.toLowerCase());
+        out.push(normalized);
+        if (out.length >= limit) break;
+      }
+      continue;
+    }
+
+    if (Array.isArray(current)) {
+      queue.push(...current);
+      continue;
+    }
+
+    if (typeof current === "object") {
+      queue.push(...Object.values(current as Record<string, unknown>));
+    }
+  }
+
+  return out;
+}
+
+function isGithubUrl(value: string): boolean {
+  return /^https?:\/\/github\.com\//i.test(value) || /^[\w.-]+\/[\w.-]+$/.test(value);
+}
+
+function isLikelyImageUrl(value: string): boolean {
+  return /\.(png|jpg|jpeg|gif|svg|webp|ico)(\?|#|$)/i.test(value);
+}
+
+function extractResourceLinks(value: unknown, limit = 10): string[] {
+  return uniqueStrings(
+    extractUrls(value, limit * 3).filter(
+      (item) => !isGithubUrl(item) && !isLikelyImageUrl(item)
+    ),
+    limit
+  );
+}
+
+function projectAssetSummaries(value: unknown): ScoutProjectAsset[] {
+  const assets = Array.isArray(value) ? value : [];
+  const out: ScoutProjectAsset[] = [];
+
+  for (let index = 0; index < assets.length; index += 1) {
+    const asset = assets[index] as Record<string, unknown>;
+    const categoryLabel =
+      uniqueStrings(
+        [
+          ...shortList([asset.category, asset.type, asset.assetType, asset.platform], 2),
+          "Asset",
+        ],
+        1
+      )[0] ?? "Asset";
+    const label =
+      uniqueStrings(
+        [
+          asText(asset.name),
+          asText(asset.title),
+          asText(asset.asset),
+          asText(asset.url),
+          `${categoryLabel} ${index + 1}`,
+        ],
+        1
+      )[0] ?? `${categoryLabel} ${index + 1}`;
+    const url = uniqueStrings(extractUrls(asset, 3), 1)[0];
+
+    out.push({
+      assetId: simpleHash(JSON.stringify({ label, categoryLabel, url })),
+      label,
+      categoryLabel,
+      url,
+      impactSummary: shortList([asset.impacts, asset.impact, asset.bugTypes, asset.description], 3),
+      tags: uniqueStrings(
+        [
+          ...shortList([asset.type, asset.category, asset.ecosystem, asset.language], 4),
+        ],
+        4
+      ),
+    });
+  }
+
+  return out;
+}
+
+async function getFieldValueResult(
+  mcpService: any,
+  projectIdentity: string,
+  fieldName: string
+): Promise<any> {
+  const fieldRes = await mcpService.callTool("immunefi", "get_field_values", {
+    project_ids: [projectIdentity],
+    field_name: fieldName,
+  });
+  return safeJsonParse<any>(extractToolText(fieldRes));
+}
+
+function projectResourcesFromFields(
+  fieldEntries: Array<{ fieldName: string; value: unknown }>,
+  assets: ScoutProjectAsset[]
+): ScoutProjectResource[] {
+  const resources: ScoutProjectResource[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of fieldEntries) {
+    for (const url of extractResourceLinks(entry.value, 8)) {
+      const key = url.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      resources.push({
+        label: entry.fieldName.replace(/_/g, " "),
+        url,
+        sourceField: entry.fieldName,
+      });
+    }
+  }
+
+  for (const asset of assets) {
+    if (!asset.url || isGithubUrl(asset.url)) continue;
+    const key = asset.url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    resources.push({
+      label: asset.label,
+      url: asset.url,
+      sourceField: "asset",
+    });
+  }
+
+  return resources.slice(0, 12);
+}
+
 function extractProjects(searchJson: any, fallback: ScoutCategoryConfig): RawProject[] {
   const results = Array.isArray(searchJson?.result)
     ? searchJson.result
@@ -580,29 +858,61 @@ async function enrichProject(
   }
 
   const projectIdentity = project.projectId ?? project.projectName;
-  const [impactsRes, rewardsRes, maxBountyRes, reposRes] = await Promise.all([
+  const [impactsRes, rewardsRes, maxBountyRes, reposRes, assetsRes, tagsRes] = await Promise.all([
     mcpService.callTool("immunefi", "get_impacts", { project_ids: [projectIdentity] }),
     mcpService.callTool("immunefi", "get_rewards", { project_ids: [projectIdentity] }),
     mcpService.callTool("immunefi", "get_max_bounty", { project_ids: [projectIdentity] }),
     mcpService.callTool("immunefi", "search_github_repos", { project_ids: [projectIdentity] }),
+    mcpService.callTool("immunefi", "get_program_assets", { project_ids: [projectIdentity] }),
+    mcpService.callTool("immunefi", "get_tags", { project_ids: [projectIdentity] }),
   ]);
 
   const impactsJson = safeJsonParse<any>(extractToolText(impactsRes));
   const rewardsJson = safeJsonParse<any>(extractToolText(rewardsRes));
   const maxBountyJson = safeJsonParse<any>(extractToolText(maxBountyRes));
   const reposJson = safeJsonParse<any>(extractToolText(reposRes));
+  const assetsJson = safeJsonParse<any>(extractToolText(assetsRes));
+  const tagsJson = safeJsonParse<any>(extractToolText(tagsRes));
 
   const impactsEntry = firstResultEntry(impactsJson, projectIdentity);
   const rewardsEntry = firstResultEntry(rewardsJson, projectIdentity);
   const maxBountyEntry = firstResultEntry(maxBountyJson, projectIdentity);
   const reposEntry = firstResultEntry(reposJson, projectIdentity);
+  const assetsEntry = firstResultEntry(assetsJson, projectIdentity);
+  const tagsEntry = firstResultEntry(tagsJson, projectIdentity);
 
-  const repos = extractRepos(
-    reposEntry?.github_repositories ??
-      reposEntry?.githubRepos ??
-      reposJson?.github_repositories ??
-      reposJson
+  const rawAssets = assetsEntry?.assets ?? [];
+  const projectAssets = projectAssetSummaries(rawAssets);
+  const repos = uniqueStrings(
+    [
+      ...extractRepos(
+        reposEntry?.github_repositories ??
+          reposEntry?.githubRepos ??
+          reposJson?.github_repositories ??
+          reposJson
+      ),
+      ...projectAssets
+        .map((asset) => asset.url)
+        .filter((assetUrl): assetUrl is string => Boolean(assetUrl && isGithubUrl(assetUrl))),
+    ],
+    12
   );
+  const resourceFieldValues = await Promise.all(
+    PROJECT_RESOURCE_FIELDS.map(async (fieldName) => ({
+      fieldName,
+      value: firstResultEntry(await getFieldValueResult(mcpService, projectIdentity, fieldName), projectIdentity)
+        ?.value,
+    }))
+  );
+  const projectResources = projectResourcesFromFields(resourceFieldValues, projectAssets);
+  const mergedCategoryTags = uniqueStrings(
+    [
+      ...project.categoryTags,
+      ...shortList(tagsEntry?.tags ?? tagsJson, 10),
+    ],
+    10
+  );
+  const impactsInScope = impactsEntry?.impacts ?? impactsJson;
 
   const rewardSummary = uniqueStrings(
     [
@@ -621,18 +931,31 @@ async function enrichProject(
     projectName: project.projectName,
     category: project.category,
     categoryLabel: project.categoryLabel,
-    categoryTags: project.categoryTags,
-    impactsInScope: impactsEntry?.impacts ?? impactsJson,
+    categoryTags: mergedCategoryTags,
+    impactsInScope,
     impactsOutOfScope: impactsEntry?.out_of_scope ?? impactsEntry?.outOfScope,
     rewards: rewardsEntry?.rewards ?? rewardsJson,
     rewardSummary,
-    scopeSummary: shortList(impactsEntry?.impacts ?? impactsJson, 4),
+    scopeSummary: uniqueStrings(
+      [
+        ...shortList(impactsInScope, 4),
+        ...projectAssets.slice(0, 3).map((asset) => `${asset.categoryLabel}: ${asset.label}`),
+      ],
+      6
+    ),
     maxBounty:
       maxBountyEntry?.max_bounty ?? maxBountyEntry?.maxBounty ?? maxBountyJson,
     maxBountyText: maxBountyText(
       maxBountyEntry?.max_bounty ?? maxBountyEntry?.maxBounty ?? maxBountyJson
     ),
     githubRepositories: repos,
+    primaryRepository: repos[0],
+    projectAssets,
+    projectResources,
+    assetCount: projectAssets.length,
+    impactCount: flattenText(impactsInScope, 100).length,
+    repositoryCount: repos.length,
+    resourceCount: projectResources.length,
     telegramRoomId: telegramContext?.telegramRoomId,
     telegramChannelId: telegramContext?.telegramChannelId,
   };
@@ -651,6 +974,12 @@ function discoverySignature(scoutData: ScoutData): string {
       reward: scoutData.rewardSummary,
       maxBounty: scoutData.maxBountyText,
       repos: scoutData.githubRepositories,
+      assets: scoutData.projectAssets.map((asset) => ({
+        label: asset.label,
+        category: asset.categoryLabel,
+        url: asset.url,
+      })),
+      resources: scoutData.projectResources.map((resource) => resource.url),
     })
   );
 }
@@ -670,6 +999,15 @@ function categorySnapshots(): ScoutWatcherCategorySnapshot[] {
     discoveredCount: Array.from(discoveryMap.values()).filter(
       (entry) => entry.category === category.key
     ).length,
+    assetCount: Array.from(discoveryMap.values())
+      .filter((entry) => entry.category === category.key)
+      .reduce((sum, entry) => sum + entry.assetCount, 0),
+    repositoryCount: Array.from(discoveryMap.values())
+      .filter((entry) => entry.category === category.key)
+      .reduce((sum, entry) => sum + entry.repositoryCount, 0),
+    resourceCount: Array.from(discoveryMap.values())
+      .filter((entry) => entry.category === category.key)
+      .reduce((sum, entry) => sum + entry.resourceCount, 0),
     newDiscoveries: categoryRunState[category.key].newDiscoveries,
     lastRunMatches: categoryRunState[category.key].lastRunMatches,
     lastRunAt: categoryRunState[category.key].lastRunAt,
@@ -719,11 +1057,16 @@ function upsertJobForScoutData(scoutData: ScoutData) {
   const target = {
     ...baseTarget,
     displayName: scoutData.projectName,
-    url: scoutData.githubRepositories[0] ?? baseTarget.url,
+    url: scoutData.primaryRepository ?? scoutData.githubRepositories[0] ?? baseTarget.url,
     metadata: {
       ...(baseTarget.metadata ?? {}),
+      scoutProjectLevel: true,
       scoutCategory: scoutData.category,
       scoutCategoryLabel: scoutData.categoryLabel,
+      scoutPrimaryRepository: scoutData.primaryRepository,
+      scoutRepositoryCount: scoutData.repositoryCount,
+      scoutAssetCount: scoutData.assetCount,
+      scoutResourceCount: scoutData.resourceCount,
     },
   };
 
@@ -780,6 +1123,13 @@ function updateDiscoveryTracking(
     categoryLabel: scoutData.categoryLabel,
     categoryTags: scoutData.categoryTags,
     githubRepositories: scoutData.githubRepositories,
+    primaryRepository: scoutData.primaryRepository,
+    projectAssets: scoutData.projectAssets,
+    projectResources: scoutData.projectResources,
+    assetCount: scoutData.assetCount,
+    impactCount: scoutData.impactCount,
+    repositoryCount: scoutData.repositoryCount,
+    resourceCount: scoutData.resourceCount,
     rewardSummary: scoutData.rewardSummary,
     scopeSummary: scoutData.scopeSummary,
     maxBountyText: scoutData.maxBountyText,
@@ -811,7 +1161,7 @@ function summaryMessage(
     .slice(0, 3)
     .map(
       (entry) =>
-        `${entry.projectName} [${entry.categoryLabel}]${entry.maxBountyText ? ` - ${entry.maxBountyText}` : ""}`
+        `${entry.projectName} [${entry.categoryLabel}]${entry.maxBountyText ? ` - ${entry.maxBountyText}` : ""} (${entry.assetCount} assets, ${entry.repositoryCount} repos)`
     )
     .join("; ");
 
@@ -1009,7 +1359,7 @@ async function runScoutPass(
 }
 
 export function ensureScoutWatcher(runtime: IAgentRuntime) {
-  watcherRuntime = runtime;
+  adoptWatcherRuntime(runtime);
   refreshWatcherConfig();
 
   if (!watcherState.startedAt) {
@@ -1032,15 +1382,19 @@ export function ensureScoutWatcher(runtime: IAgentRuntime) {
   }, watcherState.pollIntervalMs);
 
   void refreshScoutWatcher(runtime, { reason: "startup" });
+  if (watcherState.mode === "LIVE" && watcherState.readiness.available) {
+    setTimeout(() => {
+      if (!watcherRuntime) return;
+      void refreshScoutWatcher(watcherRuntime, { reason: "warmup retry" });
+    }, 12_000);
+  }
 }
 
 export async function refreshScoutWatcher(
   runtime?: IAgentRuntime,
   options?: Omit<ScoutPassOptions, "categories">
 ): Promise<ScoutRefreshResult> {
-  if (runtime) {
-    watcherRuntime = runtime;
-  }
+  adoptWatcherRuntime(runtime);
 
   if (!watcherRuntime) {
     throw new Error("Scout watcher has not been initialized with a runtime.");
@@ -1093,7 +1447,7 @@ export async function runAdHocScoutQuery(
   query: string,
   options?: Omit<ScoutPassOptions, "categories">
 ): Promise<ScoutRefreshResult> {
-  watcherRuntime = runtime;
+  adoptWatcherRuntime(runtime);
   refreshWatcherConfig();
 
   if (activeRefresh) {

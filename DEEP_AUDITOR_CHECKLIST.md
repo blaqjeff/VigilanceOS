@@ -125,10 +125,17 @@ Done when:
 ## 10. Demo Hardening
 
 - [x] Expose custom GitHub/local target intake clearly in the operator UI so demo runs do not depend on direct API submission
+- [x] Add hosted folder upload intake alongside same-machine local-path mode so local targets still work when the stack is deployed remotely
+- [x] Show visible upload / queue progress for hosted folder uploads so large transfers do not look idle
+- [x] Send pending-approval Telegram alerts for custom UI-submitted targets so `/approve <jobId>` works outside Scout
+- [x] Expand Scout discovery from first-repo summaries to project-level scope cards with asset, repo, and resource counts without changing the GitHub/local audit path
 - [x] Refresh model readiness live instead of relying on a stale boot-time snapshot
 - [x] Launch audits asynchronously from the backend so long-running jobs do not depend on a single held-open request
 - [x] Suppress paired `secure` reference examples from dominating controlled Solana demo targets
 - [x] Repair Telegram proactive alert delivery so Scout/audit notifications no longer fail on missing send handlers
+- [x] Resolve human-review findings per candidate from the UI instead of leaving `needs_human_review` items stuck on the main screen
+- [x] Allow terminal jobs to be archived from the operator UI so stale reviewed work can be cleared from the main screen
+- [x] Send proactive Telegram alerts through the direct Bot API path first so non-fatal runtime memory writes no longer pollute delivery logs
 - [ ] Rerun the controlled Solana demo target with the new multi-finding path
 - [ ] Rerun the controlled EVM demo target with the new multi-finding path
 - [ ] Capture one or two findings that clearly show grounded reasoning and honest evidence labels

@@ -71,6 +71,13 @@ function fromScoutData(
   };
 }
 
+function resolveTelegramChatId(
+  scoutData?: Record<string, unknown> | null
+): string {
+  const target = fromScoutData(scoutData);
+  return target?.channelId || target?.roomId || "";
+}
+
 export async function attachTelegramContext(
   runtime: IAgentRuntime,
   message: Memory,
@@ -115,6 +122,33 @@ export async function sendTelegramAlert(
   const target = fromScoutData(scoutData);
   if (!target) {
     return false;
+  }
+
+  const directChatId = resolveTelegramChatId(scoutData);
+  const botToken = asText(process.env.TELEGRAM_BOT_TOKEN);
+  if (botToken && directChatId) {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: directChatId,
+          text,
+        }),
+      });
+
+      if (response.ok) {
+        logger.info(`[TelegramOps] Direct Telegram alert sent (chatId=${directChatId})`);
+        return true;
+      }
+
+      const errorText = await response.text();
+      logger.warn(
+        `[TelegramOps] Direct Telegram send failed (chatId=${directChatId}, status=${response.status}): ${errorText}`
+      );
+    } catch (error) {
+      logger.warn(`[TelegramOps] Direct Telegram send failed: ${error}`);
+    }
   }
 
   const targetInfo: TargetInfo = {
@@ -165,6 +199,9 @@ export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string
   const repoList = Array.isArray((job.scoutData as any)?.githubRepositories)
     ? ((job.scoutData as any)?.githubRepositories as string[])
     : [];
+  const assetCount = Number((job.scoutData as any)?.assetCount ?? 0);
+  const impactCount = Number((job.scoutData as any)?.impactCount ?? 0);
+  const resourceCount = Number((job.scoutData as any)?.resourceCount ?? 0);
 
   return [
     isNew ? "SCOUT ALERT: new target discovered" : "SCOUT ALERT: existing target refreshed",
@@ -172,8 +209,36 @@ export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string
     `Job: ${job.jobId}`,
     `State: ${stateLabel(job.state)}`,
     categoryLabel ? `Category: ${categoryLabel}` : "",
+    assetCount > 0 || impactCount > 0 || repoList.length > 0 || resourceCount > 0
+      ? `Project scope: ${assetCount} assets | ${impactCount} impacts | ${repoList.length} repos | ${resourceCount} resources`
+      : "",
     rewardLabel ? `Reward: ${rewardLabel}` : "",
     scopeSummary ? `Scope: ${truncate(scopeSummary, 160)}` : "",
+    repoList.length > 0 ? `Repo: ${truncate(repoList[0], 120)}` : "",
+    `Approve and run: /approve ${job.jobId}`,
+    `Status: /status ${job.jobId}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatApprovalRequestAlert(job: AuditJob): string {
+  const scoutMode = asText((job.scoutData as any)?.scoutMode).toUpperCase();
+  const heading =
+    scoutMode === "CUSTOM"
+      ? "CUSTOM TARGET QUEUED FOR APPROVAL"
+      : "TARGET QUEUED FOR APPROVAL";
+
+  const categoryLabel = truncate((job.scoutData as any)?.categoryLabel, 120);
+  const repoList = Array.isArray((job.scoutData as any)?.githubRepositories)
+    ? ((job.scoutData as any)?.githubRepositories as string[])
+    : [];
+
+  return [
+    heading,
+    `Target: ${job.target.displayName}`,
+    `Job: ${job.jobId}`,
+    categoryLabel ? `Category: ${categoryLabel}` : "",
     repoList.length > 0 ? `Repo: ${truncate(repoList[0], 120)}` : "",
     `Approve and run: /approve ${job.jobId}`,
     `Status: /status ${job.jobId}`,

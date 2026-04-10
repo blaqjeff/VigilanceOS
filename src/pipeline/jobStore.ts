@@ -106,7 +106,7 @@ export function transitionJob(
 export function updateJobData(
   jobId: string,
   data: Partial<
-    Pick<AuditJob, "target" | "ingestion" | "report" | "verdict" | "error" | "scoutData">
+    Pick<AuditJob, "target" | "ingestion" | "report" | "verdict" | "error" | "scoutData" | "archivedAt">
   >
 ): AuditJob {
   const job = jobs.get(jobId);
@@ -120,8 +120,23 @@ export function updateJobData(
   if (data.verdict !== undefined) job.verdict = data.verdict;
   if (data.error !== undefined) job.error = data.error;
   if (data.scoutData !== undefined) job.scoutData = data.scoutData;
+  if (data.archivedAt !== undefined) job.archivedAt = data.archivedAt;
 
   job.updatedAt = nowIso();
+  return clone(job);
+}
+
+export function setJobArchived(jobId: string, archived: boolean): AuditJob {
+  const job = jobs.get(jobId);
+  if (!job) {
+    throw new Error(`[JobStore] Job not found: ${jobId}`);
+  }
+
+  job.archivedAt = archived ? nowIso() : undefined;
+  job.updatedAt = nowIso();
+  logger.info(
+    `[JobStore] Job ${jobId} ${archived ? "archived" : "unarchived"}`
+  );
   return clone(job);
 }
 
@@ -134,7 +149,7 @@ export function getJobByTargetId(targetId: string): AuditJob | undefined {
   // Return the most recent job for a given target
   let latest: AuditJob | undefined;
   for (const job of jobs.values()) {
-    if (job.target.targetId === targetId) {
+    if (job.target.targetId === targetId && !job.archivedAt) {
       if (!latest || job.createdAt > latest.createdAt) {
         latest = job;
       }
@@ -147,8 +162,13 @@ export function listJobs(filter?: {
   state?: AuditJobState;
   targetId?: string;
   limit?: number;
+  includeArchived?: boolean;
 }): AuditJob[] {
   let result = Array.from(jobs.values());
+
+  if (!filter?.includeArchived) {
+    result = result.filter((j) => !j.archivedAt);
+  }
 
   if (filter?.state) {
     result = result.filter((j) => j.state === filter.state);
@@ -175,6 +195,7 @@ export function findPendingJob(targetId: string): AuditJob | undefined {
   for (const job of jobs.values()) {
     if (
       job.target.targetId === targetId &&
+      !job.archivedAt &&
       job.state === "pending_approval"
     ) {
       return clone(job);
@@ -191,6 +212,7 @@ export function findApprovedJob(targetId: string): AuditJob | undefined {
   for (const job of jobs.values()) {
     if (
       job.target.targetId === targetId &&
+      !job.archivedAt &&
       job.state === "approved"
     ) {
       return clone(job);
@@ -215,6 +237,7 @@ export function jobStats(): Record<AuditJobState, number> {
     failed: 0,
   };
   for (const job of jobs.values()) {
+    if (job.archivedAt) continue;
     stats[job.state] = (stats[job.state] || 0) + 1;
   }
   return stats as Record<AuditJobState, number>;

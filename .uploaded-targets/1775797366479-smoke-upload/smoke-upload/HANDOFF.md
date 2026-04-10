@@ -78,6 +78,7 @@ The following important local/source changes were reconciled:
 ### Remaining runtime/integration blockers
 
 - OpenAI-compatible model availability is the current blocker for end-to-end audits in the active environment
+- Telegram is not active because `TELEGRAM_BOT_TOKEN` is not set
 
 ### Latest validation snapshot
 
@@ -97,10 +98,10 @@ The following important local/source changes were reconciled:
 - Local replay-generation probes against `sealevel-attacks` and `damn-vulnerable-defi-shallow` now produce repo-anchored `guided_replay` artifacts that avoid the template detector while still remaining honestly unvalidated
 - The old class-template generators (`src/analyzers/solana-poc.ts` and `src/analyzers/evm-poc.ts`) are no longer part of the active path and have been removed to keep the repo aligned with the guided-replay architecture
 - The operator console now surfaces ranked candidate findings inside the job-detail modal, shows discovery provenance (`analyzer`, `exploration`, `analyzer+exploration`), displays candidate counts on finding cards, and explains publish / human-review / discard outcomes through explicit outcome-driver summaries instead of relying on implicit reviewer text alone
-- The operator-facing intake UX now exposes explicit `GitHub Repo`, `Local Folder`, and `Immunefi Project` modes with mode-specific validation and demo presets, and `Local Folder` now supports both same-machine absolute paths and hosted browser-folder upload
+- The operator-facing intake UX is restored again: the UI now exposes explicit `GitHub Repo`, `Local Folder`, and `Immunefi Project` modes with mode-specific validation and demo presets, while backend target parsing still accepts plain `owner/repo` input and absolute local-folder paths
 - Custom UI-submitted targets now send Telegram pending-approval alerts too, so manual queueing no longer depends on Scout to make `/approve <jobId>` visible in the operator chat
 - Telegram HITL is re-enabled in the local environment; readiness now reports Telegram as `ready` and backend startup logs show the Telegram bot plugin starting again
-- Telegram proactive delivery is no longer blocked by the old missing-send-handler bug, and it now prefers direct Bot API delivery before runtime send-handler fallback so alerts reach the operator chat without the old non-fatal Telegram memory-write noise
+- Telegram proactive delivery is no longer blocked by the old missing-send-handler bug: `src/telegram/ops.ts` now self-registers the Telegram send handler on demand, and live Scout refresh logs show outbound messages being sent to the configured alert chat
 - The Scout UI is now explicitly labeled as project-level discovery only; it should not be presented as asset-level Immunefi scope expansion until the watcher can explode per-project assets/docs/repos properly
 - Model readiness is no longer boot-time-only: `src/readiness.ts` and `src/plugins/plugin-ui-bridge/index.ts` now refresh the model probe live for the readiness panel and again right before audits start
 - Audit launch is now asynchronous at the backend, so `/vigilance/audit` accepts the job quickly and the scan/review lifecycle continues in the background instead of holding one request open through the whole run
@@ -108,11 +109,6 @@ The following important local/source changes were reconciled:
 - The stale Scout-only auditor instruction has been removed from both `characters/auditor.character.json` and the live enrichment prompt in `src/pipeline/audit.ts`, so the auditor is no longer told to mirror Scout rules exclusively or force every final report to inherit weak seeded hypotheses
 - Candidate-level review is now first-class: each candidate finding carries its own reviewer verdict, job state is aggregated across all reviewed candidates, and the top-level report / verdict are derived lead summaries instead of the only source of truth
 - The operator console findings gallery is now flattened by reviewed finding instead of one job-primary card, with ranking controls plus `lead finding` / `most urgent` labeling so the full reviewed finding set is visible on the main screen
-- Human-review findings are no longer stuck: the job-detail modal now exposes per-candidate `Publish` and `Discard` actions, and the backend recomputes the aggregate job outcome after each analyst decision instead of flattening the whole job at once
-- Hosted folder upload is now a first-class intake path through `ui/src/app/api/vigilance/upload-folder/route.ts`, and smoke tests confirmed that browser-uploaded folders materialize under `.uploaded-targets`, queue as `local` jobs, and preserve cleanup metadata for later ingestion cleanup
-- Hosted folder uploads now show explicit `Uploading` / `Queueing` state in the UI so large transfers do not look idle and invite duplicate submissions
-- Terminal jobs can now be archived from the job-detail modal; archived jobs are hidden from the default queue and findings views but can still be fetched through the backend with `includeArchived=true`
-- Scout discovery is now richer at the project level: watcher snapshots and alerts keep asset counts, impact counts, repo counts, and linked non-GitHub resources/doc URLs instead of collapsing discovery down to only the first repo summary
 
 ### Important note about earlier failures
 

@@ -2569,6 +2569,32 @@ function aggregateReviewVerdict(
   };
 }
 
+export function summarizeReviewedReport(
+  report: AuditReport,
+  ingestion?: IngestionResult
+): {
+  report: AuditReport;
+  verdict: ReviewerVerdict;
+} {
+  const reviewedCandidates = rankReviewedCandidates(candidatesFromReport(report), ingestion);
+  const lead = reviewedCandidates[0];
+  const verdict = aggregateReviewVerdict(reviewedCandidates, ingestion);
+
+  if (!lead) {
+    return { report, verdict };
+  }
+
+  return {
+    report: reportFromLeadCandidate(
+      report.reportId,
+      report.targetId,
+      reviewedCandidates,
+      ingestion
+    ),
+    verdict,
+  };
+}
+
 export async function runReviewFindings(
   runtime: IAgentRuntime,
   opts: {

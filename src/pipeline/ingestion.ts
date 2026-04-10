@@ -1131,6 +1131,7 @@ export async function ingestTarget(target: Target): Promise<IngestionResult> {
     if (!stat.isDirectory()) {
       throw new Error(`Local path is not a directory: ${localPath}`);
     }
+    cloned = Boolean(target.metadata?.systemManaged);
     materialization = {
       source: "local_path",
       localPath,

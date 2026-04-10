@@ -126,6 +126,7 @@ type AuditJob = {
   target: Target;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
   stateHistory: StateTransition[];
   report?: AuditReport;
   verdict?: ReviewerVerdict;
@@ -167,6 +168,24 @@ type ScoutDiscovery = {
   categoryLabel: string;
   categoryTags: string[];
   githubRepositories: string[];
+  primaryRepository?: string;
+  projectAssets: Array<{
+    assetId: string;
+    label: string;
+    categoryLabel: string;
+    url?: string;
+    impactSummary: string[];
+    tags: string[];
+  }>;
+  projectResources: Array<{
+    label: string;
+    url: string;
+    sourceField?: string;
+  }>;
+  assetCount: number;
+  impactCount: number;
+  repositoryCount: number;
+  resourceCount: number;
   rewardSummary: string[];
   scopeSummary: string[];
   maxBountyText?: string;
@@ -182,6 +201,9 @@ type ScoutWatcherCategorySnapshot = {
   label: string;
   queries: string[];
   discoveredCount: number;
+  assetCount: number;
+  repositoryCount: number;
+  resourceCount: number;
   newDiscoveries: number;
   lastRunMatches: number;
   lastRunAt?: string;
@@ -212,7 +234,9 @@ type ScoutWatcherSnapshot = {
 };
 
 type IntakeMode = "github" | "local" | "immunefi";
+type LocalIntakeMode = "path" | "upload";
 type FindingRankMode = "severity_then_confidence" | "confidence" | "severity";
+type UploadPhase = "idle" | "uploading" | "queueing";
 
 type FindingFeedEntry = {
   key: string;
@@ -875,11 +899,15 @@ function CandidateFindingCard({
   lead = false,
   review,
   leadLabel,
+  busy = false,
+  onResolve,
 }: {
   candidate: AuditFindingCandidate;
   lead?: boolean;
   review?: ReviewerVerdict;
   leadLabel?: string | null;
+  busy?: boolean;
+  onResolve?: (action: "publish" | "discard") => void;
 }) {
   const evidence = candidate.evidence;
   const counts = countArtifactEvidence(evidence);
@@ -968,14 +996,35 @@ function CandidateFindingCard({
         </div>
       )}
 
-      {review?.rationale && (
-        <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3">
-          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Reviewer Outcome</p>
-          <p className="mt-2 text-sm leading-6 text-slate-300">{review.rationale}</p>
-        </div>
-      )}
+        {review?.rationale && (
+          <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/70 p-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Reviewer Outcome</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">{review.rationale}</p>
+          </div>
+        )}
 
-      {(candidate.neighborhoodIds?.length || candidate.affectedSurface?.length) && (
+        {review?.verdict === "needs_human_review" && onResolve && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onResolve("publish")}
+              className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Publish
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onResolve("discard")}
+              className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-200 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Discard
+            </button>
+          </div>
+        )}
+
+        {(candidate.neighborhoodIds?.length || candidate.affectedSurface?.length) && (
         <div className="mt-3 flex flex-wrap gap-2">
           {(candidate.neighborhoodIds ?? []).slice(0, 4).map((id) => (
             <span
@@ -1078,10 +1127,19 @@ function FindingResultCard({
 
 function JobDetailPanel({
   job,
+  busy = false,
   onClose,
+  onResolveFinding,
+  onArchive,
 }: {
   job: AuditJob;
+  busy?: boolean;
   onClose: () => void;
+  onResolveFinding?: (
+    candidate: AuditFindingCandidate,
+    action: "publish" | "discard"
+  ) => void;
+  onArchive?: () => void;
 }) {
   const candidates =
     job.report?.candidateFindings?.length
@@ -1092,6 +1150,7 @@ function JobDetailPanel({
   const lead = leadCandidate(job.report) ?? fallbackLeadCandidate(job.report);
   const drivers = outcomeDrivers(job);
   const counts = findingCounts(job.report);
+  const canArchive = ["published", "needs_human_review", "discarded", "failed"].includes(job.state);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
@@ -1128,19 +1187,29 @@ function JobDetailPanel({
               </a>
             )}
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-widest ${stateTone(job.state)}`}>
-              {stateLabel(job.state)}
-            </span>
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+            <div className="flex flex-col items-end gap-2">
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-widest ${stateTone(job.state)}`}>
+                {stateLabel(job.state)}
+              </span>
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
               job.target.type === "github"
                 ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-200"
                 : "border-violet-400/20 bg-violet-400/10 text-violet-200"
-            }`}>
-              {job.target.type}
-            </span>
+              }`}>
+                {job.target.type}
+              </span>
+              {canArchive && onArchive && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={onArchive}
+                  className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300 transition hover:border-cyan-400/30 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Archive
+                </button>
+              )}
+            </div>
           </div>
-        </div>
 
         <LifecycleBar job={job} />
 
@@ -1253,6 +1322,13 @@ function JobDetailPanel({
                     {candidates.length} total
                   </span>
                 </div>
+                {candidates.some(
+                  (candidate) => (candidate.review ?? job.verdict)?.verdict === "needs_human_review"
+                ) && (
+                  <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+                    Analyst resolution is now per finding. Promote or discard only the findings that still need human review, and the aggregate job outcome will recompute automatically.
+                  </div>
+                )}
                 <div className="mt-3 grid gap-3 lg:grid-cols-2">
                   {candidates.map((candidate, index) => (
                     <CandidateFindingCard
@@ -1271,6 +1347,13 @@ function JobDetailPanel({
                           : null
                       }
                       review={candidate.review ?? (candidate.candidateId === job.report?.leadCandidateId ? job.verdict : undefined)}
+                      busy={busy}
+                      onResolve={
+                        onResolveFinding &&
+                        (candidate.review ?? job.verdict)?.verdict === "needs_human_review"
+                          ? (action) => onResolveFinding(candidate, action)
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -1530,6 +1613,20 @@ function ScoutCategoryCard({
         <span>{category.lastRunMatches} seen last sweep</span>
         <span>{category.newDiscoveries} new total</span>
       </div>
+      <div className="mt-3 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-3">
+        <div className="rounded-xl border border-white/10 bg-slate-900/70 px-3 py-2">
+          <p className="uppercase tracking-[0.18em] text-slate-500">Assets</p>
+          <p className="mt-1 text-sm font-semibold text-white">{category.assetCount}</p>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-slate-900/70 px-3 py-2">
+          <p className="uppercase tracking-[0.18em] text-slate-500">Repos</p>
+          <p className="mt-1 text-sm font-semibold text-white">{category.repositoryCount}</p>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-slate-900/70 px-3 py-2">
+          <p className="uppercase tracking-[0.18em] text-slate-500">Resources</p>
+          <p className="mt-1 text-sm font-semibold text-white">{category.resourceCount}</p>
+        </div>
+      </div>
       <p className="mt-3 text-[11px] leading-5 text-slate-500">
         Queries: {category.queries.join(" | ")}
       </p>
@@ -1544,6 +1641,11 @@ function ScoutCategoryCard({
 export default function Home() {
   const [target, setTarget] = React.useState("");
   const [targetMode, setTargetMode] = React.useState<IntakeMode>("github");
+  const [localIntakeMode, setLocalIntakeMode] =
+    React.useState<LocalIntakeMode>("path");
+  const [uploadedFiles, setUploadedFiles] = React.useState<File[]>([]);
+  const [uploadedFolderLabel, setUploadedFolderLabel] = React.useState("");
+  const [uploadPhase, setUploadPhase] = React.useState<UploadPhase>("idle");
   const [busy, setBusy] = React.useState(false);
   const [scoutBusy, setScoutBusy] = React.useState(false);
   const [jobs, setJobs] = React.useState<AuditJob[]>([]);
@@ -1555,6 +1657,7 @@ export default function Home() {
   const [findingRankMode, setFindingRankMode] =
     React.useState<FindingRankMode>("severity_then_confidence");
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
+  const folderInputRef = React.useRef<HTMLInputElement | null>(null);
   const roomId = "00000000-0000-0000-0000-000000000000";
   const intakeCopy = INTAKE_MODE_COPY[targetMode];
 
@@ -1606,10 +1709,68 @@ export default function Home() {
 
   // ---- Actions ----
 
+  function handleFolderSelection(files: FileList | null) {
+    const nextFiles = Array.from(files ?? []);
+    setUploadedFiles(nextFiles);
+
+    if (nextFiles.length === 0) {
+      setUploadedFolderLabel("");
+      return;
+    }
+
+    const firstRelativePath =
+      ((nextFiles[0] as any).webkitRelativePath as string | undefined) ??
+      nextFiles[0].name;
+    const rootLabel =
+      firstRelativePath.split(/[\\/]+/).filter(Boolean)[0] ?? nextFiles[0].name;
+    setUploadedFolderLabel(rootLabel);
+  }
+
+  function resetUploadedFolder() {
+    setUploadedFiles([]);
+    setUploadedFolderLabel("");
+    setUploadPhase("idle");
+    if (folderInputRef.current) {
+      folderInputRef.current.value = "";
+    }
+  }
+
   async function submitTarget() {
     setBusy(true);
     setActionError(null);
     try {
+      if (targetMode === "local" && localIntakeMode === "upload") {
+        if (uploadedFiles.length === 0) {
+          setActionError("Choose a folder to upload before queueing it.");
+          return;
+        }
+
+        setUploadPhase("uploading");
+        const form = new FormData();
+        form.append("roomId", roomId);
+        form.append("displayName", uploadedFolderLabel || "uploaded-folder");
+        for (const file of uploadedFiles) {
+          const relativePath =
+            ((file as any).webkitRelativePath as string | undefined) ?? file.name;
+          form.append("files", file);
+          form.append("relativePaths", relativePath);
+        }
+
+        setUploadPhase("queueing");
+        const uploadRes = await fetch("/api/vigilance/upload-folder", {
+          method: "POST",
+          body: form,
+        });
+        const uploadPayload = await uploadRes.json().catch(() => null);
+        if (!uploadRes.ok) {
+          setActionError(uploadPayload?.error ?? "Folder upload failed.");
+        } else {
+          resetUploadedFolder();
+        }
+        await refresh();
+        return;
+      }
+
       const validationError = validateTargetInput(targetMode, target);
       if (validationError) {
         setActionError(validationError);
@@ -1722,6 +1883,57 @@ export default function Home() {
       }
       await refresh();
     } finally {
+      setUploadPhase("idle");
+      setBusy(false);
+    }
+  }
+
+  async function resolveFinding(
+    job: AuditJob,
+    candidate: AuditFindingCandidate,
+    action: "publish" | "discard"
+  ) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(
+        `/api/vigilance/jobs/${job.jobId}/findings/${candidate.candidateId}/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            roomId,
+          }),
+        }
+      );
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(payload?.error ?? "Finding resolution failed.");
+      }
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archiveJob(job: AuditJob) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/vigilance/jobs/${job.jobId}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(payload?.error ?? "Archive failed.");
+      } else {
+        setSelectedJob(null);
+      }
+      await refresh();
+    } finally {
       setBusy(false);
     }
   }
@@ -1804,7 +2016,13 @@ export default function Home() {
 
       {/* Selected job detail */}
       {selectedJob && (
-        <JobDetailPanel job={selectedJob} onClose={() => setSelectedJob(null)} />
+        <JobDetailPanel
+          job={selectedJob}
+          busy={busy}
+          onClose={() => setSelectedJob(null)}
+          onResolveFinding={(candidate, action) => void resolveFinding(selectedJob, candidate, action)}
+          onArchive={() => void archiveJob(selectedJob)}
+        />
       )}
 
       {/* Header */}
@@ -1895,10 +2113,35 @@ export default function Home() {
                 {intakeCopy.helper}
               </p>
               <p className="mt-2 text-xs leading-5 text-slate-500">
-                {intakeCopy.detail}
+                {targetMode === "local" && localIntakeMode === "upload"
+                  ? "Upload mode sends the folder contents to the server first, so it also works when the stack is hosted remotely."
+                  : intakeCopy.detail}
               </p>
+              {targetMode === "local" && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {([
+                    { value: "path", label: "Use local path" },
+                    { value: "upload", label: "Upload folder" },
+                  ] as const).map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setLocalIntakeMode(option.value)}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+                        localIntakeMode === option.value
+                          ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
+                          : "border-white/10 bg-slate-950/40 text-slate-400 hover:border-cyan-400/20 hover:text-slate-200"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="mt-4 flex flex-wrap gap-2">
-                {INTAKE_PRESETS.filter((preset) => preset.mode === targetMode).map((preset) => (
+                {INTAKE_PRESETS.filter(
+                  (preset) => preset.mode === targetMode && !(targetMode === "local" && localIntakeMode === "upload")
+                ).map((preset) => (
                   <button
                     key={`${preset.mode}-${preset.label}`}
                     type="button"
@@ -1912,24 +2155,103 @@ export default function Home() {
             </div>
 
             <div className="flex w-full flex-col gap-3 lg:max-w-xl lg:flex-row">
-              <input
-                id="target-input"
-                type="text"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && target.trim()) void submitTarget();
-                }}
-                className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50"
-                placeholder={intakeCopy.placeholder}
-              />
+              {targetMode === "local" && localIntakeMode === "upload" ? (
+                <div className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white">
+                  <input
+                    ref={folderInputRef}
+                    type="file"
+                    multiple
+                    onChange={(e) => handleFolderSelection(e.target.files)}
+                    className="hidden"
+                    {...({ webkitdirectory: "", directory: "" } as any)}
+                  />
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                        Browser folder upload
+                      </p>
+                      <p className="mt-1 truncate text-sm text-slate-200">
+                        {uploadedFiles.length > 0
+                          ? `${uploadedFolderLabel || "folder"} · ${uploadedFiles.length} file${uploadedFiles.length === 1 ? "" : "s"} selected`
+                          : "Choose a repository folder from this machine"}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => folderInputRef.current?.click()}
+                        className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200 transition hover:border-cyan-400/30 hover:text-cyan-200"
+                      >
+                        Choose folder
+                      </button>
+                      {uploadedFiles.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={resetUploadedFolder}
+                          className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 transition hover:border-red-500/30 hover:text-red-200"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {uploadPhase !== "idle" && (
+                    <div className="mt-4 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <span className="relative flex h-3 w-3">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75"></span>
+                          <span className="relative inline-flex h-3 w-3 rounded-full bg-cyan-500"></span>
+                        </span>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-cyan-200">
+                            {uploadPhase === "uploading" ? "Uploading folder" : "Queueing target"}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-300">
+                            {uploadPhase === "uploading"
+                              ? `Sending ${uploadedFiles.length} file${uploadedFiles.length === 1 ? "" : "s"} to the server.`
+                              : "Materializing the uploaded folder into a local audit target."}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-900">
+                        <div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-400" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <input
+                  id="target-input"
+                  type="text"
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && target.trim()) void submitTarget();
+                  }}
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/50"
+                  placeholder={intakeCopy.placeholder}
+                />
+              )}
               <button
                 id="submit-target-btn"
-                disabled={busy || !target.trim()}
+                disabled={
+                  busy ||
+                  (targetMode === "local" && localIntakeMode === "upload"
+                    ? uploadedFiles.length === 0
+                    : !target.trim())
+                }
                 onClick={() => void submitTarget()}
                 className="rounded-2xl bg-cyan-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap"
               >
-                {busy ? "Working..." : "Queue Target"}
+                {busy
+                  ? targetMode === "local" && localIntakeMode === "upload"
+                    ? uploadPhase === "uploading"
+                      ? "Uploading..."
+                      : "Queueing..."
+                    : "Working..."
+                  : targetMode === "local" && localIntakeMode === "upload"
+                    ? "Upload + Queue"
+                    : "Queue Target"}
               </button>
             </div>
           </div>
@@ -2067,7 +2389,7 @@ export default function Home() {
                 </span>
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-400">
-                Scout polls across Blockchain / DLT, Smart Contract, and Websites and Applications, then keeps the operator queue warm with deduped targets and context-rich alerts.
+                Scout polls across Blockchain / DLT, Smart Contract, and Websites and Applications, then keeps project-level queue context warm with deduped targets, scoped assets, repo coverage, and linked resources.
               </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -2165,9 +2487,39 @@ export default function Home() {
                               <p className="mt-1 text-xs text-slate-400">
                                 {summaryLine(discovery.scopeSummary, "Scope context pending")}
                               </p>
-                              {discovery.githubRepositories.length > 0 && (
-                                <p className="mt-1 truncate text-[11px] text-slate-500">
-                                  Repo: {discovery.githubRepositories[0]}
+                              <div className="mt-3 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-4">
+                                <div className="rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2">
+                                  <p className="uppercase tracking-[0.16em] text-slate-500">Assets</p>
+                                  <p className="mt-1 text-sm font-semibold text-white">{discovery.assetCount}</p>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2">
+                                  <p className="uppercase tracking-[0.16em] text-slate-500">Impacts</p>
+                                  <p className="mt-1 text-sm font-semibold text-white">{discovery.impactCount}</p>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2">
+                                  <p className="uppercase tracking-[0.16em] text-slate-500">Repos</p>
+                                  <p className="mt-1 text-sm font-semibold text-white">{discovery.repositoryCount}</p>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2">
+                                  <p className="uppercase tracking-[0.16em] text-slate-500">Resources</p>
+                                  <p className="mt-1 text-sm font-semibold text-white">{discovery.resourceCount}</p>
+                                </div>
+                              </div>
+                              {discovery.primaryRepository && (
+                                <p className="mt-2 truncate text-[11px] text-slate-500">
+                                  Primary repo: {discovery.primaryRepository}
+                                </p>
+                              )}
+                              {discovery.projectAssets.length > 0 && (
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  Assets: {discovery.projectAssets.slice(0, 2).map((asset) => asset.label).join(" | ")}
+                                  {discovery.projectAssets.length > 2 ? ` +${discovery.projectAssets.length - 2} more` : ""}
+                                </p>
+                              )}
+                              {discovery.projectResources.length > 0 && (
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  Resources: {discovery.projectResources.slice(0, 2).map((resource) => resource.label).join(" | ")}
+                                  {discovery.projectResources.length > 2 ? ` +${discovery.projectResources.length - 2} more` : ""}
                                 </p>
                               )}
                             </div>

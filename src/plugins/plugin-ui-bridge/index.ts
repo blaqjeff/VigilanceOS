@@ -1,6 +1,11 @@
 import type { Plugin, Route } from "@elizaos/core";
 import { logger } from "@elizaos/core";
-import { runAudit, runReviewFindings, targetFromInput } from "../../pipeline/audit.js";
+import {
+  runAudit,
+  runReviewFindings,
+  summarizeReviewedReport,
+  targetFromInput,
+} from "../../pipeline/audit.js";
 import { ingestTarget, cleanupIngestion } from "../../pipeline/ingestion.js";
 import { writeAudit, writeFinding, writeReview, writeTarget } from "../../pipeline/memory.js";
 import {
@@ -9,7 +14,11 @@ import {
 } from "../../readiness.js";
 import { ensureScoutWatcher, getScoutWatcherSnapshot, refreshScoutWatcher } from "../../scout/watcher.js";
 import type { IngestionResult } from "../../pipeline/types.js";
-import { formatAuditCompletionAlert, sendTelegramAlert } from "../../telegram/ops.js";
+import {
+  formatApprovalRequestAlert,
+  formatAuditCompletionAlert,
+  sendTelegramAlert,
+} from "../../telegram/ops.js";
 import {
   createJob,
   findApprovedJob,
@@ -18,6 +27,7 @@ import {
   getJobByTargetId,
   jobStats,
   listJobs,
+  setJobArchived,
   transitionJob,
   updateJobData,
 } from "../../pipeline/jobStore.js";
@@ -25,6 +35,10 @@ import {
 function json(res: any, status: number, body: any) {
   res.status(status);
   res.json(body);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function getRoomId(req: any): string {
@@ -168,8 +182,19 @@ const createTargetRoute: Route = {
 
       const roomId = getRoomId(req);
       const userId = getUserId(req);
+      const requestedDisplayName = String(req.body?.displayName ?? "").trim();
+      const requestedMetadata = isPlainObject(req.body?.metadata) ? req.body.metadata : undefined;
 
       const target = targetFromInput(input);
+      if (requestedDisplayName) {
+        target.displayName = requestedDisplayName;
+      }
+      if (requestedMetadata) {
+        target.metadata = {
+          ...(target.metadata ?? {}),
+          ...requestedMetadata,
+        };
+      }
       const scoutData = {
         scoutMode: "CUSTOM",
         query: input,
@@ -188,9 +213,207 @@ const createTargetRoute: Route = {
         writeTarget(runtime, { roomId, userId, target, scoutData })
       );
 
+      await sendTelegramAlert(runtime, scoutData as any, formatApprovalRequestAlert(updatedJob));
+
       return json(res, 200, { success: true, data: { job: updatedJob, target } });
     } catch (e) {
       logger.error(`[UIBridge] create target failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// POST /vigilance/jobs/:jobId/findings/:candidateId/resolve
+// ---------------------------------------------------------------------------
+const resolveFindingRoute: Route = {
+  name: "vigilance-resolve-finding",
+  path: "/vigilance/jobs/:jobId/findings/:candidateId/resolve",
+  type: "POST",
+  public: true,
+  handler: async (req: any, res: any, runtime: any) => {
+    try {
+      const jobId = String(req.params?.jobId ?? "").trim();
+      const candidateId = String(req.params?.candidateId ?? "").trim();
+      const requestedAction = String(req.body?.action ?? "").trim().toLowerCase();
+      const analystNote = String(req.body?.note ?? "").trim();
+      const roomId = getRoomId(req);
+      const userId = getUserId(req);
+
+      if (!jobId || !candidateId) {
+        return json(res, 400, {
+          success: false,
+          error: "jobId and candidateId are required",
+        });
+      }
+
+      if (requestedAction !== "publish" && requestedAction !== "discard") {
+        return json(res, 400, {
+          success: false,
+          error: "action must be 'publish' or 'discard'",
+        });
+      }
+      const action = requestedAction as "publish" | "discard";
+
+      const job = getJob(jobId);
+      if (!job?.report?.candidateFindings?.length) {
+        return json(res, 404, {
+          success: false,
+          error: "Job report or candidate findings were not found",
+        });
+      }
+
+      let resolved = false;
+      const nextCandidates = job.report.candidateFindings.map((candidate) => {
+        if (candidate.candidateId !== candidateId) {
+          return candidate;
+        }
+        resolved = true;
+
+        const previousReview =
+          candidate.review ??
+          (job.verdict ?? {
+            verdict: "needs_human_review",
+            rationale: "",
+            confidence: 0.5,
+          });
+
+        if (previousReview.verdict !== "needs_human_review") {
+          throw new Error(`Candidate ${candidateId} is not awaiting human review`);
+        }
+
+        const operatorLabel =
+          action === "publish"
+            ? "Operator manually promoted this finding after human review."
+            : "Operator manually discarded this finding after human review.";
+
+        return {
+          ...candidate,
+          review: {
+            verdict: action,
+            confidence: Math.max(previousReview.confidence, action === "publish" ? 0.7 : 0.5),
+            rationale: [previousReview.rationale, analystNote, operatorLabel]
+              .filter(Boolean)
+              .join(" ")
+              .trim(),
+          },
+        };
+      });
+
+      if (!resolved) {
+        return json(res, 404, {
+          success: false,
+          error: `Candidate ${candidateId} was not found on job ${jobId}`,
+        });
+      }
+
+      const updatedReport = {
+        ...job.report,
+        candidateFindings: nextCandidates,
+      };
+      const summarized = summarizeReviewedReport(updatedReport, job.ingestion);
+
+      updateJobData(job.jobId, {
+        report: summarized.report,
+        verdict: summarized.verdict,
+      });
+
+      let nextJob = getJob(job.jobId)!;
+      if (
+        nextJob.state === "needs_human_review" &&
+        summarized.verdict.verdict === "publish"
+      ) {
+        nextJob = transitionJob(nextJob.jobId, "published", {
+          report: summarized.report,
+          verdict: summarized.verdict,
+        });
+        await persistCompatMemory("finding", () =>
+          writeFinding(runtime, {
+            roomId,
+            userId,
+            target: nextJob.target,
+            report: summarized.report,
+            verdict: summarized.verdict,
+          })
+        );
+        await sendTelegramAlert(
+          runtime,
+          nextJob.scoutData as any,
+          formatAuditCompletionAlert(nextJob)
+        );
+      } else if (
+        nextJob.state === "needs_human_review" &&
+        summarized.verdict.verdict === "discard"
+      ) {
+        nextJob = transitionJob(nextJob.jobId, "discarded", {
+          report: summarized.report,
+          verdict: summarized.verdict,
+        });
+        await sendTelegramAlert(
+          runtime,
+          nextJob.scoutData as any,
+          formatAuditCompletionAlert(nextJob)
+        );
+      }
+
+      return json(res, 200, {
+        success: true,
+        data: {
+          job: nextJob,
+          report: summarized.report,
+          verdict: summarized.verdict,
+        },
+      });
+    } catch (e: any) {
+      logger.error(`[UIBridge] resolve finding failed: ${e}`);
+      return json(res, 500, {
+        success: false,
+        error: e?.message ?? "internal error",
+      });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// POST /vigilance/jobs/:jobId/archive
+// ---------------------------------------------------------------------------
+const archiveJobRoute: Route = {
+  name: "vigilance-archive-job",
+  path: "/vigilance/jobs/:jobId/archive",
+  type: "POST",
+  public: true,
+  handler: async (req: any, res: any) => {
+    try {
+      const jobId = String(req.params?.jobId ?? "").trim();
+      const archivedRaw = req.body?.archived;
+      const archived = archivedRaw === undefined ? true : Boolean(archivedRaw);
+
+      if (!jobId) {
+        return json(res, 400, { success: false, error: "jobId is required" });
+      }
+
+      const job = getJob(jobId);
+      if (!job) {
+        return json(res, 404, { success: false, error: "Job not found" });
+      }
+
+      const terminalStates: Array<typeof job.state> = [
+        "published",
+        "needs_human_review",
+        "discarded",
+        "failed",
+      ];
+      if (!terminalStates.includes(job.state)) {
+        return json(res, 409, {
+          success: false,
+          error: `Job ${job.jobId} is in state '${job.state}' and cannot be archived yet`,
+        });
+      }
+
+      const updatedJob = setJobArchived(jobId, archived);
+      return json(res, 200, { success: true, data: { job: updatedJob } });
+    } catch (e) {
+      logger.error(`[UIBridge] archive job failed: ${e}`);
       return json(res, 500, { success: false, error: "internal error" });
     }
   },
@@ -399,6 +622,8 @@ const jobsListRoute: Route = {
       const state = req.query?.state as string | undefined;
       const targetId = req.query?.targetId as string | undefined;
       const limit = parseInt(req.query?.limit ?? "50", 10);
+      const includeArchived =
+        String(req.query?.includeArchived ?? "false").toLowerCase() === "true";
 
       const validStates = [
         "submitted", "pending_approval", "approved", "scanning",
@@ -407,7 +632,7 @@ const jobsListRoute: Route = {
       const filterState =
         state && validStates.includes(state) ? (state as any) : undefined;
 
-      const result = listJobs({ state: filterState, targetId, limit });
+      const result = listJobs({ state: filterState, targetId, limit, includeArchived });
       const stats = jobStats();
       return json(res, 200, { success: true, data: { jobs: result, stats } });
     } catch (e) {
@@ -512,6 +737,8 @@ export const uiBridgePlugin: Plugin = {
   routes: [
     createTargetRoute,
     approveTargetRoute,
+    archiveJobRoute,
+    resolveFindingRoute,
     runAuditRoute,
     scoutRoute,
     scoutRefreshRoute,
