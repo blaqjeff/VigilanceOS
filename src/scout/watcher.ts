@@ -3,10 +3,21 @@ import { logger } from "@elizaos/core";
 
 import { createDocumentMemory } from "../pipeline/memory.js";
 import { targetFromInput } from "../pipeline/audit.js";
-import { createJob, getJobByTargetId, transitionJob, updateJobData } from "../pipeline/jobStore.js";
+import type { AuditJob } from "../pipeline/types.js";
+import {
+  createJob,
+  getJob,
+  getJobByTargetId,
+  transitionJob,
+  updateJobData,
+} from "../pipeline/jobStore.js";
 import { nowIso, simpleHash } from "../pipeline/utils.js";
 import { getIntegrationReadiness } from "../readiness.js";
-import { formatScoutDiscoveryAlert, sendTelegramAlert } from "../telegram/ops.js";
+import {
+  formatApprovalRequestAlert,
+  formatScoutDiscoveryAlert,
+  sendTelegramAlert,
+} from "../telegram/ops.js";
 
 const DEFAULT_ROOM_ID = "00000000-0000-0000-0000-000000000000";
 const DEFAULT_SCOUT_POLL_INTERVAL_MS = 5 * 60 * 1000;
@@ -42,6 +53,25 @@ export type ScoutProjectResource = {
   sourceField?: string;
 };
 
+export type ScoutChildTargetKind =
+  | "github_repo"
+  | "web_asset"
+  | "explorer_asset"
+  | "resource";
+
+export type ScoutChildTarget = {
+  childId: string;
+  kind: ScoutChildTargetKind;
+  label: string;
+  summary: string;
+  sourceUrl?: string;
+  tags: string[];
+  queueable: boolean;
+  auditTargetInput?: string;
+  queuedJobId?: string;
+  queuedJobState?: string;
+};
+
 export type ScoutData = {
   scoutMode: ScoutMode;
   query: string;
@@ -61,21 +91,22 @@ export type ScoutData = {
   primaryRepository?: string;
   projectAssets: ScoutProjectAsset[];
   projectResources: ScoutProjectResource[];
+  childTargets: ScoutChildTarget[];
   assetCount: number;
   impactCount: number;
   repositoryCount: number;
   resourceCount: number;
+  queueableChildCount: number;
   telegramRoomId?: string;
   telegramChannelId?: string;
 };
 
 export type ScoutDiscovery = {
   projectKey: string;
-  jobId: string;
-  targetId: string;
-  state: string;
+  commandRef: string;
   projectId?: string;
   projectName: string;
+  state: "discovered" | "partially_queued" | "queued";
   category: ScoutCategoryKey;
   categoryLabel: string;
   categoryTags: string[];
@@ -83,10 +114,13 @@ export type ScoutDiscovery = {
   primaryRepository?: string;
   projectAssets: ScoutProjectAsset[];
   projectResources: ScoutProjectResource[];
+  childTargets: ScoutChildTarget[];
   assetCount: number;
   impactCount: number;
   repositoryCount: number;
   resourceCount: number;
+  queueableChildCount: number;
+  queuedChildCount: number;
   rewardSummary: string[];
   scopeSummary: string[];
   maxBountyText?: string;
@@ -154,6 +188,7 @@ type RawProject = {
 
 type InternalDiscovery = ScoutDiscovery & {
   signature: string;
+  scoutData: ScoutData;
 };
 
 type CategoryRunCounters = Record<
@@ -227,10 +262,23 @@ const DEMO_PROJECTS: Array<
         sourceField: "repo",
       },
     ],
+    childTargets: [
+      {
+        childId: "demo-solana-child-1",
+        kind: "github_repo",
+        label: "coral-xyz/sealevel-attacks",
+        summary: "Queue the Solana demo repository for audit.",
+        sourceUrl: "https://github.com/coral-xyz/sealevel-attacks",
+        tags: ["repo", "queueable"],
+        queueable: true,
+        auditTargetInput: "https://github.com/coral-xyz/sealevel-attacks",
+      },
+    ],
     assetCount: 1,
     impactCount: 3,
     repositoryCount: 1,
     resourceCount: 1,
+    queueableChildCount: 1,
   },
   {
     scoutMode: "DEMO",
@@ -264,10 +312,23 @@ const DEMO_PROJECTS: Array<
         sourceField: "repo",
       },
     ],
+    childTargets: [
+      {
+        childId: "demo-evm-child-1",
+        kind: "github_repo",
+        label: "theredguild/damn-vulnerable-defi",
+        summary: "Queue the EVM demo repository for audit.",
+        sourceUrl: "https://github.com/theredguild/damn-vulnerable-defi",
+        tags: ["repo", "queueable"],
+        queueable: true,
+        auditTargetInput: "https://github.com/theredguild/damn-vulnerable-defi",
+      },
+    ],
     assetCount: 1,
     impactCount: 3,
     repositoryCount: 1,
     resourceCount: 1,
+    queueableChildCount: 1,
   },
   {
     scoutMode: "DEMO",
@@ -301,10 +362,23 @@ const DEMO_PROJECTS: Array<
         sourceField: "repo",
       },
     ],
+    childTargets: [
+      {
+        childId: "demo-web-child-1",
+        kind: "github_repo",
+        label: "juice-shop/juice-shop",
+        summary: "Queue the web-app demo repository for audit.",
+        sourceUrl: "https://github.com/juice-shop/juice-shop",
+        tags: ["repo", "queueable"],
+        queueable: true,
+        auditTargetInput: "https://github.com/juice-shop/juice-shop",
+      },
+    ],
     assetCount: 1,
     impactCount: 3,
     repositoryCount: 1,
     resourceCount: 1,
+    queueableChildCount: 1,
   },
 ];
 
@@ -427,6 +501,19 @@ function asText(value: unknown): string {
 
 function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function slugify(value: string): string {
+  const base = value
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return base || "project";
 }
 
 function flattenText(value: unknown, limit = 12, depth = 0, acc: string[] = []): string[] {
@@ -662,8 +749,39 @@ function isGithubUrl(value: string): boolean {
   return /^https?:\/\/github\.com\//i.test(value) || /^[\w.-]+\/[\w.-]+$/.test(value);
 }
 
+function normalizeGithubRepoUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed)) {
+    return `https://github.com/${trimmed}`;
+  }
+
+  if (!/^https?:\/\/github\.com\//i.test(trimmed)) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) {
+      return null;
+    }
+
+    return `https://github.com/${parts[0]}/${parts[1]}`;
+  } catch {
+    return null;
+  }
+}
+
 function isLikelyImageUrl(value: string): boolean {
   return /\.(png|jpg|jpeg|gif|svg|webp|ico)(\?|#|$)/i.test(value);
+}
+
+function isExplorerAssetUrl(value: string): boolean {
+  return /(etherscan|basescan|arbiscan|optimistic\.etherscan|polygonscan|bscscan|snowtrace|snowscan|solscan|sonicscan|hyperevmscan|explorer\.)/i.test(
+    value
+  );
 }
 
 function extractResourceLinks(value: unknown, limit = 10): string[] {
@@ -767,6 +885,146 @@ function projectResourcesFromFields(
   return resources.slice(0, 12);
 }
 
+function deriveChildTargets(
+  projectAssets: ScoutProjectAsset[],
+  projectResources: ScoutProjectResource[],
+  repos: string[]
+): ScoutChildTarget[] {
+  const childTargets: ScoutChildTarget[] = [];
+  const seen = new Set<string>();
+
+  function pushChild(child: ScoutChildTarget) {
+    const key = `${child.kind}:${(child.auditTargetInput ?? child.sourceUrl ?? child.label).toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    childTargets.push(child);
+  }
+
+  for (const repo of repos) {
+    const normalizedRepo = normalizeGithubRepoUrl(repo) ?? repo;
+    pushChild({
+      childId: simpleHash(`repo:${normalizedRepo}`),
+      kind: "github_repo",
+      label: normalizedRepo.replace(/^https?:\/\//, ""),
+      summary: "Queue this repository as a concrete audit target.",
+      sourceUrl: normalizedRepo,
+      tags: ["repo", "queueable"],
+      queueable: true,
+      auditTargetInput: normalizedRepo,
+    });
+  }
+
+  for (const asset of projectAssets) {
+    const normalizedRepo = asset.url ? normalizeGithubRepoUrl(asset.url) : null;
+    if (normalizedRepo) {
+      pushChild({
+        childId: simpleHash(`repo-asset:${normalizedRepo}`),
+        kind: "github_repo",
+        label: asset.label,
+        summary:
+          asset.impactSummary[0] ??
+          "Queue this GitHub-linked in-scope asset as an audit target.",
+        sourceUrl: normalizedRepo,
+        tags: uniqueStrings([...asset.tags, asset.categoryLabel, "queueable"], 5),
+        queueable: true,
+        auditTargetInput: normalizedRepo,
+      });
+      continue;
+    }
+
+    const kind: ScoutChildTargetKind = asset.url
+      ? isExplorerAssetUrl(asset.url)
+        ? "explorer_asset"
+        : "web_asset"
+      : "web_asset";
+
+    pushChild({
+      childId: simpleHash(`asset:${asset.assetId}`),
+      kind,
+      label: asset.label,
+      summary:
+        asset.impactSummary[0] ??
+        `${asset.categoryLabel} asset discovered by Scout.`,
+      sourceUrl: asset.url,
+      tags: uniqueStrings([...asset.tags, asset.categoryLabel], 5),
+      queueable: false,
+    });
+  }
+
+  for (const resource of projectResources) {
+    const normalizedRepo = normalizeGithubRepoUrl(resource.url);
+    if (normalizedRepo) {
+      pushChild({
+        childId: simpleHash(`repo-resource:${normalizedRepo}`),
+        kind: "github_repo",
+        label: resource.label,
+        summary: "Queue this repository-linked resource as an audit target.",
+        sourceUrl: normalizedRepo,
+        tags: uniqueStrings([resource.sourceField ?? "resource", "queueable"], 4),
+        queueable: true,
+        auditTargetInput: normalizedRepo,
+      });
+      continue;
+    }
+
+    pushChild({
+      childId: simpleHash(`resource:${resource.url}`),
+      kind: "resource",
+      label: resource.label,
+      summary: "Supporting scope resource discovered by Scout.",
+      sourceUrl: resource.url,
+      tags: uniqueStrings([resource.sourceField ?? "resource"], 4),
+      queueable: false,
+    });
+  }
+
+  return childTargets.slice(0, 50);
+}
+
+function projectCommandRef(projectId: string | undefined, projectName: string): string {
+  return slugify(projectId || projectName);
+}
+
+function hydrateChildTarget(child: ScoutChildTarget): ScoutChildTarget {
+  if (!child.queuedJobId) {
+    return { ...child, queuedJobState: undefined };
+  }
+
+  const job = getJob(child.queuedJobId);
+  if (!job || job.archivedAt) {
+    return {
+      ...child,
+      queuedJobId: undefined,
+      queuedJobState: undefined,
+    };
+  }
+
+  return {
+    ...child,
+    queuedJobState: job.state,
+  };
+}
+
+function summarizeDiscoveryQueueState(childTargets: ScoutChildTarget[]): {
+  state: ScoutDiscovery["state"];
+  queuedChildCount: number;
+} {
+  const queueableCount = childTargets.filter((child) => child.queueable).length;
+  const queuedChildCount = childTargets.filter(
+    (child) => child.queueable && Boolean(child.queuedJobId)
+  ).length;
+
+  if (queueableCount === 0 || queuedChildCount === 0) {
+    return { state: "discovered", queuedChildCount };
+  }
+
+  if (queuedChildCount >= queueableCount) {
+    return { state: "queued", queuedChildCount };
+  }
+
+  return { state: "partially_queued", queuedChildCount };
+}
+
 function extractProjects(searchJson: any, fallback: ScoutCategoryConfig): RawProject[] {
   const results = Array.isArray(searchJson?.result)
     ? searchJson.result
@@ -847,6 +1105,10 @@ async function enrichProject(
         [...project.categoryTags, ...demo.categoryTags],
         6
       ),
+      childTargets: demo.childTargets.map((child) => ({ ...child })),
+      queueableChildCount:
+        demo.queueableChildCount ??
+        demo.childTargets.filter((child) => child.queueable).length,
       telegramRoomId: telegramContext?.telegramRoomId,
       telegramChannelId: telegramContext?.telegramChannelId,
     };
@@ -890,10 +1152,12 @@ async function enrichProject(
           reposEntry?.githubRepos ??
           reposJson?.github_repositories ??
           reposJson
-      ),
+      )
+        .map((repo) => normalizeGithubRepoUrl(repo) ?? repo),
       ...projectAssets
         .map((asset) => asset.url)
-        .filter((assetUrl): assetUrl is string => Boolean(assetUrl && isGithubUrl(assetUrl))),
+        .map((assetUrl) => (assetUrl ? normalizeGithubRepoUrl(assetUrl) : null))
+        .filter((assetUrl): assetUrl is string => Boolean(assetUrl)),
     ],
     12
   );
@@ -923,6 +1187,7 @@ async function enrichProject(
     ],
     4
   );
+  const childTargets = deriveChildTargets(projectAssets, projectResources, repos);
 
   return {
     scoutMode: "LIVE",
@@ -952,10 +1217,12 @@ async function enrichProject(
     primaryRepository: repos[0],
     projectAssets,
     projectResources,
+    childTargets,
     assetCount: projectAssets.length,
     impactCount: flattenText(impactsInScope, 100).length,
     repositoryCount: repos.length,
     resourceCount: projectResources.length,
+    queueableChildCount: childTargets.filter((child) => child.queueable).length,
     telegramRoomId: telegramContext?.telegramRoomId,
     telegramChannelId: telegramContext?.telegramChannelId,
   };
@@ -963,6 +1230,10 @@ async function enrichProject(
 
 function scoutIdentity(scoutData: ScoutData): string {
   return scoutData.projectId || scoutData.projectName;
+}
+
+function discoveryKey(scoutData: ScoutData): string {
+  return projectCommandRef(scoutData.projectId, scoutData.projectName);
 }
 
 function discoverySignature(scoutData: ScoutData): string {
@@ -984,28 +1255,65 @@ function discoverySignature(scoutData: ScoutData): string {
   );
 }
 
+function toPublicDiscovery(record: InternalDiscovery): ScoutDiscovery {
+  const childTargets = record.childTargets.map(hydrateChildTarget);
+  const { state, queuedChildCount } = summarizeDiscoveryQueueState(childTargets);
+
+  return {
+    projectKey: record.projectKey,
+    commandRef: record.commandRef,
+    projectId: record.projectId,
+    projectName: record.projectName,
+    state,
+    category: record.category,
+    categoryLabel: record.categoryLabel,
+    categoryTags: [...record.categoryTags],
+    githubRepositories: [...record.githubRepositories],
+    primaryRepository: record.primaryRepository,
+    projectAssets: clone(record.projectAssets),
+    projectResources: clone(record.projectResources),
+    childTargets,
+    assetCount: record.assetCount,
+    impactCount: record.impactCount,
+    repositoryCount: record.repositoryCount,
+    resourceCount: record.resourceCount,
+    queueableChildCount: childTargets.filter((child) => child.queueable).length,
+    queuedChildCount,
+    rewardSummary: [...record.rewardSummary],
+    scopeSummary: [...record.scopeSummary],
+    maxBountyText: record.maxBountyText,
+    firstSeenAt: record.firstSeenAt,
+    lastSeenAt: record.lastSeenAt,
+    lastAlertedAt: record.lastAlertedAt,
+    lastEvent: record.lastEvent,
+    refreshCount: record.refreshCount,
+  };
+}
+
 function trackedDiscoveries(): ScoutDiscovery[] {
   return Array.from(discoveryMap.values())
     .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime())
     .slice(0, RECENT_DISCOVERY_LIMIT)
-    .map(({ signature: _signature, ...rest }) => rest);
+    .map((record) => toPublicDiscovery(record));
 }
 
 function categorySnapshots(): ScoutWatcherCategorySnapshot[] {
+  const publicDiscoveries = Array.from(discoveryMap.values()).map((record) =>
+    toPublicDiscovery(record)
+  );
+
   return SCOUT_CATEGORIES.map((category) => ({
     key: category.key,
     label: category.label,
     queries: category.queries,
-    discoveredCount: Array.from(discoveryMap.values()).filter(
-      (entry) => entry.category === category.key
-    ).length,
-    assetCount: Array.from(discoveryMap.values())
+    discoveredCount: publicDiscoveries.filter((entry) => entry.category === category.key).length,
+    assetCount: publicDiscoveries
       .filter((entry) => entry.category === category.key)
       .reduce((sum, entry) => sum + entry.assetCount, 0),
-    repositoryCount: Array.from(discoveryMap.values())
+    repositoryCount: publicDiscoveries
       .filter((entry) => entry.category === category.key)
       .reduce((sum, entry) => sum + entry.repositoryCount, 0),
-    resourceCount: Array.from(discoveryMap.values())
+    resourceCount: publicDiscoveries
       .filter((entry) => entry.category === category.key)
       .reduce((sum, entry) => sum + entry.resourceCount, 0),
     newDiscoveries: categoryRunState[category.key].newDiscoveries,
@@ -1028,7 +1336,7 @@ async function persistDiscoveryMemory(
   runtime: IAgentRuntime,
   reportText: string,
   scoutData: ScoutData,
-  jobId: string,
+  projectKey: string,
   roomId?: string,
   userId?: string
 ) {
@@ -1043,7 +1351,7 @@ async function persistDiscoveryMemory(
         scoutMode: scoutData.scoutMode,
         projectId: scoutData.projectId,
         projectName: scoutData.projectName,
-        jobId,
+        projectKey,
       },
     });
   } catch (error) {
@@ -1051,74 +1359,31 @@ async function persistDiscoveryMemory(
   }
 }
 
-function upsertJobForScoutData(scoutData: ScoutData) {
-  const identity = scoutIdentity(scoutData);
-  const baseTarget = targetFromInput(identity);
-  const target = {
-    ...baseTarget,
-    displayName: scoutData.projectName,
-    url: scoutData.primaryRepository ?? scoutData.githubRepositories[0] ?? baseTarget.url,
-    metadata: {
-      ...(baseTarget.metadata ?? {}),
-      scoutProjectLevel: true,
-      scoutCategory: scoutData.category,
-      scoutCategoryLabel: scoutData.categoryLabel,
-      scoutPrimaryRepository: scoutData.primaryRepository,
-      scoutRepositoryCount: scoutData.repositoryCount,
-      scoutAssetCount: scoutData.assetCount,
-      scoutResourceCount: scoutData.resourceCount,
-    },
-  };
-
-  const existing = getJobByTargetId(target.targetId);
-  const firstSeenAt = asText((existing?.scoutData as any)?.firstSeenAt) || nowIso();
-  const mergedScoutData = {
-    ...(existing?.scoutData ?? {}),
-    ...scoutData,
-    firstSeenAt,
-    lastSeenAt: nowIso(),
-  };
-
-  if (existing) {
-    const updated = updateJobData(existing.jobId, {
-      target: {
-        ...existing.target,
-        displayName: target.displayName,
-        url: existing.target.url ?? target.url,
-        metadata: {
-          ...(existing.target.metadata ?? {}),
-          ...(target.metadata ?? {}),
-        },
-      },
-      scoutData: mergedScoutData,
-    });
-    return { job: updated, isNew: false };
-  }
-
-  const created = createJob(target, mergedScoutData);
-  const pending = transitionJob(created.jobId, "pending_approval");
-  return { job: pending, isNew: true };
-}
-
-function updateDiscoveryTracking(
-  job: { jobId: string; state: string; target: { targetId: string } },
-  scoutData: ScoutData
-) {
+function updateDiscoveryTracking(scoutData: ScoutData) {
   const now = nowIso();
-  const projectKey = job.target.targetId;
+  const projectKey = discoveryKey(scoutData);
   const signature = discoverySignature(scoutData);
   const existing = discoveryMap.get(projectKey);
   const isNew = !existing;
   const changed = !existing || existing.signature !== signature;
   const lastEvent: ScoutDiscovery["lastEvent"] = isNew ? "new" : changed ? "updated" : "seen";
+  const previousChildren = new Map(
+    (existing?.childTargets ?? []).map((child) => [child.childId, child])
+  );
+  const mergedChildTargets = scoutData.childTargets.map((child) => ({
+    ...child,
+    queuedJobId: previousChildren.get(child.childId)?.queuedJobId,
+    queuedJobState: previousChildren.get(child.childId)?.queuedJobState,
+  }));
+  const { state, queuedChildCount } = summarizeDiscoveryQueueState(mergedChildTargets);
+  const commandRef = projectCommandRef(scoutData.projectId, scoutData.projectName);
 
   const record: InternalDiscovery = {
     projectKey,
-    jobId: job.jobId,
-    targetId: job.target.targetId,
-    state: job.state,
+    commandRef,
     projectId: scoutData.projectId,
     projectName: scoutData.projectName,
+    state,
     category: scoutData.category,
     categoryLabel: scoutData.categoryLabel,
     categoryTags: scoutData.categoryTags,
@@ -1126,10 +1391,13 @@ function updateDiscoveryTracking(
     primaryRepository: scoutData.primaryRepository,
     projectAssets: scoutData.projectAssets,
     projectResources: scoutData.projectResources,
+    childTargets: mergedChildTargets,
     assetCount: scoutData.assetCount,
     impactCount: scoutData.impactCount,
     repositoryCount: scoutData.repositoryCount,
     resourceCount: scoutData.resourceCount,
+    queueableChildCount: scoutData.queueableChildCount,
+    queuedChildCount,
     rewardSummary: scoutData.rewardSummary,
     scopeSummary: scoutData.scopeSummary,
     maxBountyText: scoutData.maxBountyText,
@@ -1139,6 +1407,11 @@ function updateDiscoveryTracking(
     lastEvent,
     refreshCount: (existing?.refreshCount ?? 0) + 1,
     signature,
+    scoutData: {
+      ...scoutData,
+      childTargets: mergedChildTargets,
+      queueableChildCount: scoutData.queueableChildCount,
+    },
   };
 
   discoveryMap.set(projectKey, record);
@@ -1284,8 +1557,7 @@ async function runScoutPass(
         entry.query,
         options.telegramContext
       );
-      const { job, isNew } = upsertJobForScoutData(scoutData);
-      const { record, changed } = updateDiscoveryTracking(job, scoutData);
+      const { record, isNew, changed } = updateDiscoveryTracking(scoutData);
 
       if (isNew) {
         newCount += 1;
@@ -1297,21 +1569,30 @@ async function runScoutPass(
 
       const shouldAlert = isNew || changed;
       if (shouldAlert) {
-        const reportedJob = updateJobData(job.jobId, {
-          scoutData: {
-            ...(job.scoutData ?? {}),
-            ...scoutData,
-            firstSeenAt: record.firstSeenAt,
-            lastSeenAt: record.lastSeenAt,
+        const publicRecord = toPublicDiscovery(record);
+        const reportText = formatScoutDiscoveryAlert(
+          {
+            projectKey: publicRecord.projectKey,
+            commandRef: publicRecord.commandRef,
+            projectName: publicRecord.projectName,
+            categoryLabel: publicRecord.categoryLabel,
+            rewardSummary: publicRecord.rewardSummary,
+            scopeSummary: publicRecord.scopeSummary,
+            maxBountyText: publicRecord.maxBountyText,
+            githubRepositories: publicRecord.githubRepositories,
+            assetCount: publicRecord.assetCount,
+            impactCount: publicRecord.impactCount,
+            resourceCount: publicRecord.resourceCount,
+            queueableChildCount: publicRecord.queueableChildCount,
           },
-        });
-        const reportText = formatScoutDiscoveryAlert(reportedJob, isNew);
+          isNew
+        );
 
         await persistDiscoveryMemory(
           runtime,
           reportText,
           scoutData,
-          reportedJob.jobId,
+          publicRecord.projectKey,
           options.roomId,
           options.userId
         );
@@ -1329,8 +1610,7 @@ async function runScoutPass(
 
       const latest = discoveryMap.get(record.projectKey);
       if (latest) {
-        const { signature: _signature, ...publicRecord } = latest;
-        touchedDiscoveries.push(publicRecord);
+        touchedDiscoveries.push(toPublicDiscovery(latest));
       }
     }
   }
@@ -1358,6 +1638,293 @@ async function runScoutPass(
   };
 }
 
+function allDiscoveriesSorted(): InternalDiscovery[] {
+  return Array.from(discoveryMap.values()).sort(
+    (a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime()
+  );
+}
+
+function matchesDiscoveryReference(discovery: InternalDiscovery, reference: string): boolean {
+  const needle = collapseWhitespace(reference).toLowerCase();
+  if (!needle) return false;
+
+  return (
+    discovery.projectKey.toLowerCase() === needle ||
+    discovery.projectKey.toLowerCase().startsWith(needle) ||
+    discovery.commandRef.toLowerCase() === needle ||
+    discovery.commandRef.toLowerCase().startsWith(needle) ||
+    (discovery.projectId ? discovery.projectId.toLowerCase() === needle : false) ||
+    (discovery.projectId ? discovery.projectId.toLowerCase().startsWith(needle) : false) ||
+    discovery.projectName.toLowerCase().includes(needle)
+  );
+}
+
+function findInternalDiscovery(reference?: string): InternalDiscovery | undefined {
+  const ordered = allDiscoveriesSorted();
+  const needle = collapseWhitespace(reference ?? "");
+  if (!needle) {
+    return ordered[0];
+  }
+
+  return ordered.find((entry) => matchesDiscoveryReference(entry, needle));
+}
+
+function matchesChildReference(
+  child: ScoutChildTarget,
+  reference: string,
+  index: number
+): boolean {
+  const needle = collapseWhitespace(reference).toLowerCase();
+  if (!needle) return false;
+
+  return (
+    needle === String(index + 1) ||
+    child.childId.toLowerCase() === needle ||
+    child.childId.toLowerCase().startsWith(needle) ||
+    child.label.toLowerCase().includes(needle) ||
+    (child.auditTargetInput ?? "").toLowerCase().includes(needle) ||
+    (child.sourceUrl ?? "").toLowerCase().includes(needle)
+  );
+}
+
+function resolveChildSelection(
+  discovery: InternalDiscovery,
+  childRefs?: string[],
+  queueAll?: boolean
+): ScoutChildTarget[] {
+  const hydratedChildren = discovery.childTargets.map(hydrateChildTarget);
+  const queueableChildren = hydratedChildren.filter((child) => child.queueable);
+
+  if (queueAll) {
+    return queueableChildren;
+  }
+
+  if (!childRefs?.length) {
+    return [];
+  }
+
+  const selected: ScoutChildTarget[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of childRefs) {
+    const match = hydratedChildren.find((child, index) =>
+      matchesChildReference(child, ref, index)
+    );
+    if (!match || !match.queueable || seen.has(match.childId)) {
+      continue;
+    }
+    seen.add(match.childId);
+    selected.push(match);
+  }
+
+  return selected;
+}
+
+function buildScoutChildTargetJobPayload(
+  discovery: InternalDiscovery,
+  child: ScoutChildTarget
+): {
+  target: ReturnType<typeof targetFromInput>;
+  scoutData: Record<string, unknown>;
+} {
+  const input =
+    child.auditTargetInput ??
+    child.sourceUrl ??
+    discovery.primaryRepository ??
+    discovery.githubRepositories[0] ??
+    scoutIdentity(discovery.scoutData);
+  const baseTarget = targetFromInput(input);
+  const target = {
+    ...baseTarget,
+    displayName: child.label || baseTarget.displayName,
+    metadata: {
+      ...(baseTarget.metadata ?? {}),
+      scoutProjectLevel: true,
+      scoutProjectKey: discovery.projectKey,
+      scoutProjectCommandRef: discovery.commandRef,
+      scoutProjectName: discovery.projectName,
+      scoutChildId: child.childId,
+      scoutChildKind: child.kind,
+      scoutChildLabel: child.label,
+      scoutChildSourceUrl: child.sourceUrl,
+    },
+  };
+
+  return {
+    target,
+    scoutData: {
+      ...discovery.scoutData,
+      projectKey: discovery.projectKey,
+      commandRef: discovery.commandRef,
+      selectedChildTarget: {
+        childId: child.childId,
+        kind: child.kind,
+        label: child.label,
+        summary: child.summary,
+        sourceUrl: child.sourceUrl,
+        tags: child.tags,
+      },
+      selectedChildTargetIds: [child.childId],
+      selectedChildTargetCount: 1,
+    },
+  };
+}
+
+export function listScoutDiscoveries(): ScoutDiscovery[] {
+  return trackedDiscoveries();
+}
+
+export function findScoutDiscovery(reference?: string): ScoutDiscovery | undefined {
+  const discovery = findInternalDiscovery(reference);
+  return discovery ? toPublicDiscovery(discovery) : undefined;
+}
+
+export type QueueScoutChildTargetsResult = {
+  success: boolean;
+  project?: ScoutDiscovery;
+  createdJobs: AuditJob[];
+  existingJobs: AuditJob[];
+  selectedChildren: ScoutChildTarget[];
+  skippedChildren: ScoutChildTarget[];
+  message: string;
+};
+
+export async function queueScoutChildTargets(
+  runtime: IAgentRuntime,
+  options: {
+    projectRef?: string;
+    childRefs?: string[];
+    queueAll?: boolean;
+    roomId?: string;
+    userId?: string;
+  }
+): Promise<QueueScoutChildTargetsResult> {
+  const discovery = findInternalDiscovery(options.projectRef);
+  if (!discovery) {
+    return {
+      success: false,
+      createdJobs: [],
+      existingJobs: [],
+      selectedChildren: [],
+      skippedChildren: [],
+      message: "No matching Scout project was found.",
+    };
+  }
+
+  const selectedChildren = resolveChildSelection(
+    discovery,
+    options.childRefs,
+    options.queueAll
+  );
+  if (selectedChildren.length === 0) {
+    return {
+      success: false,
+      project: toPublicDiscovery(discovery),
+      createdJobs: [],
+      existingJobs: [],
+      selectedChildren: [],
+      skippedChildren: discovery.childTargets.filter((child) => !child.queueable),
+      message: options.queueAll
+        ? "This Scout project does not have any queueable child targets yet."
+        : "Select one or more queueable child targets first.",
+    };
+  }
+
+  const createdJobs: AuditJob[] = [];
+  const existingJobs: AuditJob[] = [];
+  const nextChildren = discovery.childTargets.map((child) => ({ ...child }));
+
+  for (const child of selectedChildren) {
+    const childIndex = nextChildren.findIndex((entry) => entry.childId === child.childId);
+    if (childIndex === -1 || !child.queueable) {
+      continue;
+    }
+
+    const { target, scoutData } = buildScoutChildTargetJobPayload(discovery, child);
+    const scopedScoutData = {
+      ...scoutData,
+      telegramRoomId:
+        options.roomId ?? (scoutData as any).telegramRoomId ?? discovery.scoutData.telegramRoomId,
+      telegramChannelId:
+        (scoutData as any).telegramChannelId ?? discovery.scoutData.telegramChannelId,
+    };
+    const existing = getJobByTargetId(target.targetId);
+
+    let job: AuditJob;
+    let shouldSendApprovalAlert = false;
+
+    if (existing) {
+      job = updateJobData(existing.jobId, {
+        target: {
+          ...existing.target,
+          displayName: target.displayName,
+          url: existing.target.url ?? target.url,
+          metadata: {
+            ...(existing.target.metadata ?? {}),
+            ...(target.metadata ?? {}),
+          },
+        },
+        scoutData: {
+          ...(existing.scoutData ?? {}),
+          ...scopedScoutData,
+        },
+      });
+
+      if (job.state === "submitted") {
+        job = transitionJob(job.jobId, "pending_approval");
+        shouldSendApprovalAlert = true;
+      }
+
+      existingJobs.push(job);
+    } else {
+      const created = createJob(target, scopedScoutData);
+      job = transitionJob(created.jobId, "pending_approval");
+      shouldSendApprovalAlert = true;
+      createdJobs.push(job);
+    }
+
+    nextChildren[childIndex] = {
+      ...nextChildren[childIndex],
+      queuedJobId: job.jobId,
+      queuedJobState: job.state,
+    };
+
+    if (shouldSendApprovalAlert) {
+      await sendTelegramAlert(runtime, scopedScoutData, formatApprovalRequestAlert(job));
+    }
+  }
+
+  const { state, queuedChildCount } = summarizeDiscoveryQueueState(nextChildren);
+  const updated: InternalDiscovery = {
+    ...discovery,
+    state,
+    queuedChildCount,
+    childTargets: nextChildren,
+    scoutData: {
+      ...discovery.scoutData,
+      childTargets: nextChildren,
+      queueableChildCount: nextChildren.filter((child) => child.queueable).length,
+    },
+  };
+  discoveryMap.set(updated.projectKey, updated);
+
+  const skippedChildren = selectedChildren.filter((child) => !child.queueable);
+  const queuedTotal = createdJobs.length + existingJobs.length;
+
+  return {
+    success: queuedTotal > 0,
+    project: toPublicDiscovery(updated),
+    createdJobs,
+    existingJobs,
+    selectedChildren,
+    skippedChildren,
+    message:
+      queuedTotal > 0
+        ? `Queued ${queuedTotal} child target${queuedTotal === 1 ? "" : "s"} from ${updated.projectName}.`
+        : "No queueable child targets were queued.",
+  };
+}
+
 export function ensureScoutWatcher(runtime: IAgentRuntime) {
   adoptWatcherRuntime(runtime);
   refreshWatcherConfig();
@@ -1381,12 +1948,22 @@ export function ensureScoutWatcher(runtime: IAgentRuntime) {
     void refreshScoutWatcher(watcherRuntime, { reason: "scheduled" });
   }, watcherState.pollIntervalMs);
 
-  void refreshScoutWatcher(runtime, { reason: "startup" });
+  if (watcherState.mode === "LIVE" && !runtimeHasMcpService(runtime)) {
+    watcherState.status = "scheduled";
+    watcherState.lastReason = "awaiting MCP warmup";
+  } else {
+    void refreshScoutWatcher(runtime, { reason: "startup" });
+  }
+
   if (watcherState.mode === "LIVE" && watcherState.readiness.available) {
-    setTimeout(() => {
-      if (!watcherRuntime) return;
-      void refreshScoutWatcher(watcherRuntime, { reason: "warmup retry" });
-    }, 12_000);
+    [12_000, 24_000, 40_000].forEach((delayMs, index) => {
+      setTimeout(() => {
+        if (!watcherRuntime) return;
+        void refreshScoutWatcher(watcherRuntime, {
+          reason: index === 0 ? "warmup retry" : `warmup retry ${index + 1}`,
+        });
+      }, delayMs);
+    });
   }
 }
 

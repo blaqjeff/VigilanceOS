@@ -1,468 +1,334 @@
-# Nosana x ElizaOS Agent Challenge
+# Vigilance-OS
 
-![ElizaOS](./assets/NosanaXEliza.jpg)
+Vigilance-OS is an evidence-first security agent workflow for auditing blockchain repositories and related protocol codebases.
 
-Build your own **personal AI agent** using [ElizaOS](https://elizaos.com) and deploy it on the [Nosana](https://nosana.com) decentralized compute network. Win a share of **$3,000 USDC** in prizes.
+It combines:
 
----
+- Scout discovery over Immunefi scope
+- explicit human approval before deeper audits
+- a repo-indexed auditor that produces multiple findings
+- a reviewer that tries to debunk weak claims
+- a web console and Telegram control surface for operators
 
-## The Challenge
+This project is built for the **Nosana x ElizaOS Agent Challenge**, but it is intentionally scoped as the foundation of a real security workflow rather than a one-off demo.
 
-Inspired by [OpenClaw](https://openclaw.ai/) — the self-hosted personal AI movement — this challenge is about giving AI back to the individual. Build an agent that runs on **your own infrastructure**, handles **your own tasks**, and keeps **your own data**.
+## What It Does
 
-> **Theme: Personal AI Agents** — Build an AI agent that acts as a personal assistant, automate your life, or solve a real problem for yourself or your community. The use case is entirely up to you.
+Vigilance-OS supports two main ways of working:
 
-**Framework:** [ElizaOS](https://elizaos.com) (latest v2)
-**Compute:** [Nosana](https://nosana.com) decentralized GPU network
-**Model:** Qwen3.5-27B (hosted endpoint provided by Nosana)
+1. **Direct target intake**
+   Queue a GitHub repository, a local folder path, or a folder uploaded from the browser.
+2. **Scout-driven discovery**
+   Discover Immunefi projects, inspect their scoped child targets, and queue one, many, or all relevant children for review.
 
----
+The golden path is:
 
-## Prizes — $3,000 USDC Total
+1. Submit a target
+2. Approve it through the HITL gate
+3. Run the audit
+4. Run the reviewer
+5. Inspect ranked findings with honest evidence labels
 
-| Place | Prize |
-|-------|-------|
-| 🥇 1st | $1,000 USDC |
-| 🥈 2nd | $750 USDC |
-| 🥉 3rd | $450 USDC |
-| 4th | $200 USDC |
-| 5th–10th | $100 USDC each |
+## Why This Is Different
 
----
+Vigilance-OS is not presented as a magical full autonomous auditor that reads an entire repo in one prompt. Instead, it uses a more defensible architecture:
 
-## Schedule
+- repo indexing to identify important code and security neighborhoods
+- deterministic analyzers for grounded signals
+- exploratory model-led discovery beyond analyzer hits
+- multi-finding review instead of a single polished guess
+- evidence labels that distinguish template guidance from stronger replayable proof
 
-Follow Nosana's Luma for more information: [Nosana Luma](https://luma.com/calendar/cal-RF19mq3EtF4juLc)
+That tradeoff matters because it makes the output easier to defend to judges, technical users, and future product users.
 
-![](./assets/image.png)
+## Architecture
 
----
+```mermaid
+flowchart TD
+    A["Operator / Telegram"] --> B["ElizaOS Runtime"]
+    B --> C["Scout Plugin"]
+    B --> D["UI Bridge Plugin"]
+    B --> E["HITL / Telegram Plugin"]
+    B --> F["Auditor + Reviewer Plugin"]
 
-## What to Build
-
-There are no strict requirements on use case — build whatever is most useful to you. Some ideas to get started:
-
-- 🗂️ **Personal assistant** — calendar, tasks, email drafting, reminders
-- 🔍 **Research agent** — web search, summarization, knowledge synthesis
-- 📱 **Social media manager** — Twitter/X, Telegram, Discord automation
-- 💰 **DeFi/crypto agent** — portfolio monitoring, on-chain alerts, trading insights
-- 🏠 **Home automation** — smart home control, IoT integration
-- 🛠️ **DevOps helper** — monitor services, automate deployments
-- 🎨 **Content creator** — blog posts, social copy, creative writing
-
-**Tip:** ElizaOS has a rich [plugin ecosystem](https://elizaos.github.io/eliza/docs/core/plugins). Explore existing plugins and templates before building from scratch — you might find 80% of what you need already exists.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 23+
-- pnpm (`npm install -g pnpm`)
-- Docker (for deployment)
-- Git
-
-### Quick Start
-
-```bash
-# Fork this repo, then clone your fork
-git clone https://github.com/YOUR-USERNAME/agent-challenge
-cd agent-challenge
-
-# Copy and configure environment variables
-cp .env.example .env
-# Edit .env with your Nosana endpoint details
-
-# Install dependencies
-bun i -g @elizaos/cli
-
-# Start your agent in development mode
-elizaos dev
+    C --> G["Immunefi MCP"]
+    D --> H["Next.js Operator Console"]
+    F --> I["Repo Ingestion + Indexing"]
+    I --> J["Security Neighborhoods"]
+    J --> K["Analyzer Signals"]
+    J --> L["Exploratory Discovery"]
+    K --> M["Auditor"]
+    L --> M
+    M --> N["Per-Finding Reviewer"]
+    N --> O["Published / Needs Review / Discarded"]
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to see the ElizaOS built-in client.
+## Where ElizaOS Fits
 
----
+ElizaOS is not just a thin wrapper here. It is the runtime that holds the system together.
 
-## Claim Your Nosana Builders Credits
+Vigilance-OS uses ElizaOS for:
 
-All challenge participants get **free compute credits** to deploy and run their agents on Nosana.
+- agent runtime boot and lifecycle
+- character-driven roles for Scout, Auditor, and Reviewer
+- plugin composition and tool wiring
+- Telegram controls and notifications
+- UI bridge routing into the runtime
+- OpenAI-compatible model access
+- MCP integration for Immunefi discovery
 
-**How to claim:**
+Key runtime entrypoint:
 
-1. Visit [nosana.com/builders-credits](https://nosana.com/builders-credits)
-2. Sign up or log in with your wallet
-3. Your credits will be added to your account automatically
-4. Use these credits to deploy your ElizaOS agent to the Nosana network
+- [scripts/run-eliza.mjs](/C:/VigilanceOS/scripts/run-eliza.mjs)
 
-These credits cover the compute costs for running your agent during the challenge period.
+Key Eliza-facing plugins:
 
-> **Note:** Credits are airdropped twice a day. Please be patient if you don't see them immediately after signing up.
+- [src/plugins/plugin-scout/index.ts](/C:/VigilanceOS/src/plugins/plugin-scout/index.ts)
+- [src/plugins/plugin-hitl/index.ts](/C:/VigilanceOS/src/plugins/plugin-hitl/index.ts)
+- [src/plugins/plugin-auditor-reviewer/index.ts](/C:/VigilanceOS/src/plugins/plugin-auditor-reviewer/index.ts)
+- [src/plugins/plugin-ui-bridge/index.ts](/C:/VigilanceOS/src/plugins/plugin-ui-bridge/index.ts)
 
----
+The domain-specific security engine lives inside that runtime in:
 
-## Configure Your LLM
+- [src/pipeline](/C:/VigilanceOS/src/pipeline)
+- [src/analyzers](/C:/VigilanceOS/src/analyzers)
+- [src/scout](/C:/VigilanceOS/src/scout)
 
-Nosana provides a hosted **Qwen3.5-27B-AWQ-4bit** endpoint for challenge participants. Update your `.env`:
+## Current Audit Engine
 
-```env
-OPENAI_API_KEY=nosana
-OPENAI_API_URL=https://6vq2bcqphcansrs9b88ztxfs88oqy7etah2ugudytv2x.node.k8s.prd.nos.ci/v1
-MODEL_NAME=Qwen3.5-27B-AWQ-4bit
+The current auditor is a **repo-indexed, multi-finding auditor**.
+
+At a high level it:
+
+1. Materializes the target
+2. Indexes the repository structure
+3. Builds security-relevant neighborhoods
+4. Seeds findings from analyzers and exploratory model passes
+5. Reviews findings individually
+6. Ranks and exposes all findings in the UI
+
+Important current behavior:
+
+- findings are no longer collapsed to one hidden primary-only result
+- every finding can carry its own review outcome
+- the UI shows all reviewed findings
+- evidence labels are honest:
+  - `template_only`
+  - `guided_replay`
+  - `validated_replay`
+  - `executed_poc`
+
+## Feature Summary
+
+- Direct GitHub repo intake
+- Local absolute-path intake for same-machine operation
+- Browser folder upload for hosted or remote operation
+- Project-level Immunefi Scout discovery
+- Child-target fan-out under each Scout project
+- Queue one, selected, or all queueable Scout children
+- Telegram approval and status workflow
+- Multi-finding audit output
+- Reviewer pass per finding
+- Archive flow for completed jobs
+- Readiness cards for model, Scout, and Telegram status
+
+## Quick Start
+
+### 1. Install dependencies
+
+```powershell
+npm run install:all
 ```
 
-**Model Details:**
-- **Model ID:** `Qwen3.5-27B-AWQ-4bit`
-- **Max Context Length:** 60,000 tokens
-- **Provider:** Nosana decentralized inference
-- **Base Model:** cyankiwi/Qwen3.5-27B-AWQ-4bit
+### 2. Create your environment file
 
-### Option B: Local Development with Ollama
+Copy [`.env.example`](/C:/VigilanceOS/.env.example) to `.env` and fill in the values you need.
 
-```bash
-ollama pull qwen3.5:27b # or a smaller one for your system
-ollama serve
+Important variables:
+
+- `OPENAI_API_URL`
+- `OPENAI_API_KEY`
+- `MODEL_NAME`
+- `OPENAI_EMBEDDING_URL`
+- `OPENAI_EMBEDDING_API_KEY`
+- `OPENAI_EMBEDDING_MODEL`
+- `OPENAI_EMBEDDING_DIMENSIONS`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALERT_CHAT_ID`
+- `IMMUNEFI_PYTHON_CMD`
+- `SERVER_PORT`
+
+### 3. Start the full local stack
+
+```powershell
+npm run dev
 ```
 
-```env
-OPENAI_API_KEY=ollama
-OPENAI_API_URL=http://127.0.0.1:11434/v1
-MODEL_NAME=qwen3.5:27b
+That starts:
+
+- ElizaOS backend on `http://127.0.0.1:3001`
+- Next.js UI on `http://127.0.0.1:4001`
+
+Useful commands:
+
+```powershell
+npm run stop
+npm run build
+npm run build:ui
+npm run build:all
 ```
 
----
+## Usage
 
-## Customize Your Agent
+### Direct Target Intake
 
-### 1. Define your agent's character
+The operator console supports:
 
-Edit `characters/agent.character.json` to define your agent's personality, knowledge, and behavior:
+- `GitHub Repo`
+- `Local Folder`
+- `Immunefi Project`
 
-```json
-{
-  "name": "MyAgent",
-  "bio": ["Your agent's backstory and capabilities"],
-  "system": "Your agent's core instructions and behavior",
-  "plugins": ["@elizaos/plugin-bootstrap", "@elizaos/plugin-openai"],
-  "clients": ["direct"]
-}
-```
+For direct auditing, the strongest paths are:
 
-### 2. Add plugins
+- a public GitHub repo URL such as `https://github.com/theredguild/damn-vulnerable-defi`
+- a plain `owner/repo` value such as `theredguild/damn-vulnerable-defi`
+- a local absolute folder path when the backend runs on the same machine
+- a folder upload when the backend is hosted somewhere else
 
-Extend your agent by adding plugins to `package.json` and your character file:
+### Scout Workflow
 
-| Plugin | Use Case |
-|--------|----------|
-| `@elizaos/plugin-bootstrap` | Required base plugin |
-| `@elizaos/plugin-openai` | OpenAI-compatible LLM (required for Nosana endpoint) |
-| `@elizaos/plugin-web-search` | Web search capability |
-| `@elizaos/plugin-telegram` | Telegram bot client |
-| `@elizaos/plugin-discord` | Discord bot client |
-| `@elizaos/plugin-twitter` | Twitter/X integration |
-| `@elizaos/plugin-browser` | Browser/web automation |
-| `@elizaos/plugin-sql` | Database access |
+Scout now works at the **project** level instead of flattening each Immunefi discovery into one fake job.
 
-Install a plugin:
-```bash
-pnpm add @elizaos/plugin-web-search
-```
+The flow is:
 
-Add it to your character file:
-```json
-{
-  "plugins": ["@elizaos/plugin-bootstrap", "@elizaos/plugin-openai", "@elizaos/plugin-web-search"]
-}
-```
-
-### 3. Build custom actions (optional)
-
-Add your own custom logic in `src/index.ts`. See the example plugin already included.
+1. Scout discovers a project
+2. The UI shows that project with scoped child targets underneath it
+3. The operator queues one child, selected children, or all queueable children
+4. Only then are real audit jobs created
 
-### 4. Persistent storage
+This keeps discovery separate from execution and avoids queue spam.
 
-SQLite is configured by default — sufficient for development and small-scale agents. For a production-grade personal agent, consider:
+### Telegram Workflow
 
-- A mounted volume on Nosana
-- External database (PostgreSQL, PlanetScale, etc.)
-- Decentralized storage (Arweave, IPFS)
+Telegram is a real operator surface, not just a notification stub.
 
----
+Supported commands:
 
-## Deploy to Nosana
+- `/approve <jobId>`
+- `/status <jobId>`
+- `/report <jobId>`
+- `/findings`
+- `/scope <projectRef>`
+- `/queue <projectRef> <childRef[,childRef...]>`
+- `/queueall <projectRef>`
 
-> **Important:** For this challenge, you must deploy your agent to Nosana's decentralized infrastructure. Do **not** use the standard `elizaos deploy` command — that deploys to centralized cloud providers. This challenge is about embracing decentralized compute.
-
-**Why Nosana?**
-- **Decentralized** — Your agent runs on a distributed network of GPU providers, not AWS/GCP/Azure
-- **Cost-effective** — Use your free builders credits (no credit card required)
-- **Permissionless** — No vendor lock-in, full control over your infrastructure
-- **Challenge requirement** — All submissions must be deployed on Nosana
+Automatic alerts include:
 
-### Prerequisites
-
-Before deploying, ensure you have:
-- [Docker](https://docs.docker.com/get-docker/) installed and running
-- A [Docker Hub](https://hub.docker.com/) account (free)
-- Your [Nosana builders credits](https://nosana.com/builders-credits) claimed
-
-### Step 1: Build and Push Your Docker Image
-
-Your agent needs to be containerized and available on a public registry (Docker Hub) so Nosana nodes can pull and run it.
+- Scout project discovery alerts
+- manual target approval requests
+- audit completion summaries
 
-```bash
-# Build your Docker image
-docker build -t yourusername/nosana-eliza-agent:latest .
+## Demo Targets
 
-# Test it locally first (recommended)
-docker run -p 3000:3000 --env-file .env yourusername/nosana-eliza-agent:latest
+The controlled demo targets used during development are:
 
-# Visit http://localhost:3000 to verify it works
+- EVM: [theredguild/damn-vulnerable-defi](https://github.com/theredguild/damn-vulnerable-defi)
+- Solana: [coral-xyz/sealevel-attacks](https://github.com/coral-xyz/sealevel-attacks)
 
-# Log in to Docker Hub
-docker login
+For demo recording, the recommended hero path is:
 
-# Push to Docker Hub (make it public)
-docker push yourusername/nosana-eliza-agent:latest
-```
+1. submit a direct GitHub target
+2. approve it in UI or Telegram
+3. open the reviewed findings in the UI
 
-> **Tip:** Replace `yourusername` with your actual Docker Hub username. Make sure your repository is **public** so Nosana nodes can pull it.
-
-### Step 2: Configure Your Job Definition
+Scout is best shown as a secondary discovery surface.
 
-Edit `nos_job_def/nosana_eliza_job_definition.json` and update the Docker image reference:
-
-```json
-{
-  "version": "0.1",
-  "type": "container",
-  "meta": {
-    "trigger": "cli"
-  },
-  "ops": [
-    {
-      "type": "container/run",
-      "id": "eliza-agent",
-      "args": {
-        "image": "yourusername/nosana-eliza-agent:latest",  // <- Change this
-        "ports": ["3000:3000"],
-        "env": {
-          "OPENAI_API_KEY": "nosana",
-          "OPENAI_API_URL": "https://6vq2bcqphcansrs9b88ztxfs88oqy7etah2ugudytv2x.node.k8s.prd.nos.ci/v1",
-          "MODEL_NAME": "Qwen3.5-27B-AWQ-4bit"
-        }
-      }
-    }
-  ]
-}
-```
-
-> **Security Note:** For production deployments, avoid hardcoding sensitive environment variables. Consider using Nosana secrets management or external secret stores.
-
-### Step 3: Deploy via Nosana Dashboard (Easiest)
-
-This is the recommended method for beginners:
-
-1. Visit the [Nosana Dashboard](https://dashboard.nosana.com/deploy)
-2. Connect your Solana wallet (you need this for authentication and using credits)
-3. Click **Expand** to open the job definition editor
-4. Copy and paste the contents of your `nos_job_def/nosana_eliza_job_definition.json` file
-5. Select your preferred compute market:
-   - `nvidia-3090` — High performance (recommended for production)
-   - `nvidia-rtx-4090` — Premium performance
-   - `cpu-only` — Budget option (slower inference)
-6. Click **Deploy**
-7. Wait for a node to pick up your job (usually 30-60 seconds)
-8. Once running, you'll receive a public URL to access your agent
-
-### Step 4: Deploy via Nosana CLI (Advanced)
-
-For developers who prefer the command line or want to automate deployments:
-
-1. First get your API key at [https://deploy.nosana.com/account/](https://deploy.nosana.com/account/)
-2. Edit the [Nosana ElizaOS Job Definition File](./nos_job_def/nosana_eliza_job_definition.json)
-3. Learn more about [Nosana Job Definition Here](https://learn.nosana.com/deployments/jobs/job-definition/intro.html)
-
-```bash
-# Install the Nosana CLI globally
-npm install -g @nosana/cli
-
-# Deploy your agent
-nosana job post \
-  --file ./nos_job_def/nosana_eliza_job_definition.json \
-  --market nvidia-4090 \
-  --timeout 300 \
-  --api <API_KEY>
-
-# Monitor your deployment
-nosana job status <job-id>
-
-# View logs
-nosana job logs <job-id>
-```
-
-**CLI Flags Explained:**
-- `--file` — Path to your job definition JSON
-- `--market` — Which GPU market to use (nvidia-3090, nvidia-rtx-4090, etc.)
-- `--timeout` — Maximum job runtime in minutes
-
-### Step 5: Verify Your Deployment
-
-Once your job is running on Nosana:
-
-1. **Test the endpoint** — Visit the public URL provided by Nosana
-2. **Check agent responsiveness** — Send a test message to your agent
-3. **Monitor logs** — Use the Nosana Dashboard or CLI to view logs
-4. **Verify inference** — Ensure the Qwen3.5-27B model is responding correctly
-
-### Troubleshooting
-
-**Agent not starting?**
-- Check that your Docker image is public on Docker Hub
-- Verify your job definition JSON is valid
-- Ensure environment variables are correctly set
-- Check Nosana dashboard logs for error messages
-
-**Slow response times?**
-- Consider using a higher-tier GPU market (nvidia-rtx-4090)
-- Optimize your ElizaOS configuration
-- Check if the Nosana inference endpoint is reachable
-
-**Out of credits?**
-- Visit [nosana.com/builders-credits](https://nosana.com/builders-credits) to check your balance
-- Credits are airdropped twice daily — be patient if you just signed up
-
-**Need help?**
-- Join the [Nosana Discord](https://nosana.com/discord) for support
-- Check the [Nosana documentation](https://learn.nosana.io)
-- Review the [Nosana CLI docs](https://github.com/nosana-ci/nosana-cli)
-
----
-
-## What You'll Build
-
-Your submission should include:
-- **A working AI agent** built with ElizaOS
-- **A frontend interface** to interact with your agent (web UI, chat interface, dashboard, etc.)
-- **Deployment on Nosana** — your agent must run on Nosana's decentralized infrastructure
-
-**The deeper your Nosana integration, the better your score.** We're looking for projects that fully embrace decentralized infrastructure — not just a minimal deployment, but thoughtful integration into your architecture.
-
-### Examples of Deep Integration (Better Scores):
-- Using Nosana for both training and inference
-- Multi-node deployments across Nosana's network
-- Custom deployment pipelines using Nosana CLI
-- Monitoring and observability integrated with Nosana infrastructure
-- Storage solutions that leverage decentralized networks
-- Creative use of Nosana's compute marketplace
-
----
-
-## Submission
-
-Submit your project via the official submission page: **[superteam.fun/earn/listing/nosana-builders-elizaos-challenge/](https://superteam.fun/earn/listing/nosana-builders-elizaos-challenge/)** before **April 14, 2026**.
-
-**Submission Checklist** — All items are required:
-
-- [ ] **Fork this repository** and build your agent on the `elizaos-challenge` branch
-- [ ] **Build a frontend/UI** for interacting with your agent
-- [ ] **Deploy to Nosana** and get your public deployment URL (agent must run on Nosana infrastructure)
-- [ ] **Star the following repositories:**
-  - [ ] [nosana-ci/agent-challenge](https://github.com/nosana-ci/agent-challenge)
-  - [ ] [nosana-ci/nosana-programs](https://github.com/nosana-ci/nosana-programs)
-  - [ ] [nosana-ci/nosana-kit](https://github.com/nosana-ci/nosana-kit)
-  - [ ] [nosana-ci/nosana-cli](https://github.com/nosana-ci/nosana-cli)
-- [ ] **Make a social media post** about your project on your platform of choice (X/Twitter, LinkedIn, Bluesky, Instagram, or other)
-- [ ] **Provide your GitHub fork link** (public repository)
-- [ ] **Provide your Nosana deployment URL** (running agent)
-- [ ] **Write a description** of your agent and what it does (≤300 words)
-- [ ] **Record a video demo** (<1 minute) showing your agent and frontend in action
-
-> **⚠️ Important:** Submissions that do not meet these requirements will not be considered.
-
-> For complete submission requirements and additional information, visit the [official challenge page](https://superteam.fun/earn/listing/nosana-builders-elizaos-challenge/).
-
----
-
-## Judging Criteria
-
-| Criterion | Weight |
-|-----------|--------|
-| Technical implementation | 25% |
-| Nosana integration depth | 25% |
-| Usefulness & UX | 25% |
-| Creativity & originality | 15% |
-| Documentation | 10% |
-
-**Judging Details:**
-- **Technical implementation (25%)** — Code quality, architecture, and ElizaOS best practices
-- **Nosana integration depth (25%)** — How deeply Nosana is integrated into your deployment and infrastructure
-- **Usefulness & UX (25%)** — Real-world applicability, frontend quality, and user experience
-- **Creativity & originality (15%)** — Innovative use cases and novel approaches
-- **Documentation (10%)** — Code quality, README, setup instructions
-
-**Judges:** DevRel Lead & Ecosystem Specialist, Nosana
-
----
+## Nosana Integration
+
+Vigilance-OS is designed to run with Nosana-hosted models and can also point at a self-hosted Nosana vLLM deployment.
+
+Current usage patterns:
+
+- hosted OpenAI-compatible Nosana endpoint for the main audit model
+- hosted Nosana embedding endpoint for Eliza memory and semantic retrieval support
+- optional self-hosted vLLM deployment for `Qwen3.5-27B-AWQ-4bit`
+
+Self-hosting runbook:
+
+- [nos_job_def/SELF_HOST_MODEL_RUNBOOK.md](/C:/VigilanceOS/nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
+
+## Readiness Model
+
+The UI exposes live readiness states so operators can tell whether the system is genuinely usable before starting a run.
+
+Readiness covers:
+
+- Scout / Immunefi MCP
+- OpenAI-compatible model endpoint
+- Telegram
+
+Relevant files:
+
+- [src/readiness.ts](/C:/VigilanceOS/src/readiness.ts)
+- [src/plugins/plugin-ui-bridge/index.ts](/C:/VigilanceOS/src/plugins/plugin-ui-bridge/index.ts)
 
 ## Project Structure
 
+```text
+characters/                 ElizaOS character definitions
+src/analyzers/              EVM, Solana, and guided replay analyzers
+src/pipeline/               Ingestion, indexing, audit, review, job store
+src/plugins/                ElizaOS runtime plugins
+src/scout/                  Scout watcher and project discovery logic
+src/telegram/               Telegram alert helpers
+ui/                         Next.js operator console
+nos_job_def/                Nosana model deployment assets and runbook
+scripts/                    Stack orchestration and startup scripts
 ```
-├── characters/
-│   └── agent.character.json   # Your agent's character definition
-├── src/
-│   └── index.ts               # Custom plugin entry point (optional)
-├── nos_job_def/
-│   └── nosana_eliza_job_definition.json  # Nosana deployment config
-├── Dockerfile                 # Container configuration
-├── .env.example               # Environment variable template
-└── package.json
+
+## Verified State
+
+The following commands have been used repeatedly during development to verify the current codebase:
+
+```powershell
+bunx tsc -p tsconfig.json
+bun run build
+bun run build:ui
 ```
 
----
+The local stack is run with:
 
-## Resources
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\run-stack.ps1 -Mode dev
+```
 
-### ElizaOS
-- [ElizaOS Documentation](https://elizaos.github.io/eliza/docs) — Full framework docs
-- [ElizaOS Plugin Directory](https://elizaos.github.io/eliza/docs/core/plugins) — Browse available plugins
-- [ElizaOS GitHub](https://github.com/elizaos/eliza) — Source code and examples
-- [ElizaOS Discord](https://discord.gg/elizaos) — Community support
+## Known Limitations
 
-### Nosana
-- [Nosana Documentation](https://docs.nosana.io) — Platform guide
-- [Nosana Dashboard](https://dashboard.nosana.com) — Deploy and manage jobs
-- [Nosana CLI](https://github.com/nosana-ci/nosana-cli) — Command-line deployment
-- [Nosana Discord](https://nosana.com/discord) — Support and endpoint URL
+Vigilance-OS is intentionally honest about current limits.
 
-### Qwen3.5
-- [Qwen3.5-27B on HuggingFace](https://huggingface.co/Qwen/Qwen3.5-27B)
+- Solana coverage is improving but still narrower than EVM coverage
+- Scout fan-out is currently strongest for repo-like child targets
+- explorer, docs, and web scope entries are preserved as context, but not all of them are queueable yet
+- findings are evidence-ranked, but not every finding has validated or executed proof
+- dynamic live web testing is not part of this submission version
 
----
+## Key Product Docs
 
-## Support & Community
+These files are the best way to understand scope, current state, and continuation plans:
 
-- **Discord** — Join [Nosana Discord](https://nosana.com/discord) for support, the Nosana endpoint URL, and to connect with other builders
-- **Twitter/X** — Follow [@nosana_ai](https://x.com/nosana_ai) and [@elizaos](https://x.com/elizaos) for updates
-- **GitHub** — Open an issue in this repo if you find problems with the template
+- [PROJECT_SCOPE.md](/C:/VigilanceOS/PROJECT_SCOPE.md)
+- [HANDOFF.md](/C:/VigilanceOS/HANDOFF.md)
+- [DEEP_AUDITOR_PIVOT.md](/C:/VigilanceOS/DEEP_AUDITOR_PIVOT.md)
+- [DEEP_AUDITOR_CHECKLIST.md](/C:/VigilanceOS/DEEP_AUDITOR_CHECKLIST.md)
 
----
+## Submission Positioning
 
-## Star History
+The most accurate way to describe this project in a demo or judging context is:
 
-<a href="https://www.star-history.com/?repos=nosana-ci%2Fagent-challenge&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=nosana-ci/agent-challenge&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=nosana-ci/agent-challenge&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=nosana-ci/agent-challenge&type=date&legend=top-left" />
- </picture>
-</a>
+> Vigilance-OS is an ElizaOS-powered security agent workflow that discovers protocol targets, lets an operator approve them, performs repo-indexed multi-finding audits, runs a reviewer pass per finding, and presents the results with honest evidence labels through a web console and Telegram.
+
+That is a much stronger and more defensible claim than pretending the system is a magical full-repo autonomous auditor with perfect exploit proof on every run.
 
 ## License
 
-This template is open source and available under the [MIT License](./LICENSE).
-
----
-
-**Built with ElizaOS · Deployed on Nosana · Powered by Qwen3.5**
+This repository currently follows the challenge repository structure and does not yet define a separate project license.

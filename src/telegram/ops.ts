@@ -3,6 +3,21 @@ import { logger, type IAgentRuntime, type Memory, type TargetInfo } from "@eliza
 import type { AuditJob } from "../pipeline/types.js";
 import { getIntegrationReadiness } from "../readiness.js";
 
+type ScoutDiscoveryAlertPayload = {
+  projectKey?: string;
+  commandRef?: string;
+  projectName: string;
+  categoryLabel?: string;
+  rewardSummary?: unknown;
+  scopeSummary?: unknown;
+  maxBountyText?: unknown;
+  githubRepositories?: unknown;
+  assetCount?: unknown;
+  impactCount?: unknown;
+  resourceCount?: unknown;
+  queueableChildCount?: unknown;
+};
+
 function asText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -190,33 +205,39 @@ async function ensureTelegramSendHandler(runtime: IAgentRuntime): Promise<void> 
   logger.info("[TelegramOps] Registered Telegram send handler on demand.");
 }
 
-export function formatScoutDiscoveryAlert(job: AuditJob, isNew: boolean): string {
-  const categoryLabel = truncate((job.scoutData as any)?.categoryLabel, 120);
-  const rewardSummary = textList((job.scoutData as any)?.rewardSummary, 2).join(" | ");
-  const scopeSummary = textList((job.scoutData as any)?.scopeSummary, 2).join(" | ");
+export function formatScoutDiscoveryAlert(
+  discovery: ScoutDiscoveryAlertPayload,
+  isNew: boolean
+): string {
+  const categoryLabel = truncate(discovery.categoryLabel, 120);
+  const rewardSummary = textList(discovery.rewardSummary, 2).join(" | ");
+  const scopeSummary = textList(discovery.scopeSummary, 2).join(" | ");
   const rewardLabel =
-    rewardSummary || truncate((job.scoutData as any)?.maxBountyText ?? (job.scoutData as any)?.maxBounty, 120);
-  const repoList = Array.isArray((job.scoutData as any)?.githubRepositories)
-    ? ((job.scoutData as any)?.githubRepositories as string[])
+    rewardSummary || truncate(discovery.maxBountyText, 120);
+  const repoList = Array.isArray(discovery.githubRepositories)
+    ? (discovery.githubRepositories as string[])
     : [];
-  const assetCount = Number((job.scoutData as any)?.assetCount ?? 0);
-  const impactCount = Number((job.scoutData as any)?.impactCount ?? 0);
-  const resourceCount = Number((job.scoutData as any)?.resourceCount ?? 0);
+  const assetCount = Number(discovery.assetCount ?? 0);
+  const impactCount = Number(discovery.impactCount ?? 0);
+  const resourceCount = Number(discovery.resourceCount ?? 0);
+  const queueableChildCount = Number(discovery.queueableChildCount ?? 0);
+  const commandRef = asText(discovery.commandRef || discovery.projectKey);
 
   return [
-    isNew ? "SCOUT ALERT: new target discovered" : "SCOUT ALERT: existing target refreshed",
-    `Target: ${job.target.displayName}`,
-    `Job: ${job.jobId}`,
-    `State: ${stateLabel(job.state)}`,
+    isNew ? "SCOUT ALERT: new project discovered" : "SCOUT ALERT: project scope refreshed",
+    `Project: ${discovery.projectName}`,
     categoryLabel ? `Category: ${categoryLabel}` : "",
     assetCount > 0 || impactCount > 0 || repoList.length > 0 || resourceCount > 0
       ? `Project scope: ${assetCount} assets | ${impactCount} impacts | ${repoList.length} repos | ${resourceCount} resources`
       : "",
+    queueableChildCount > 0
+      ? `Queueable child targets: ${queueableChildCount}`
+      : "",
     rewardLabel ? `Reward: ${rewardLabel}` : "",
     scopeSummary ? `Scope: ${truncate(scopeSummary, 160)}` : "",
     repoList.length > 0 ? `Repo: ${truncate(repoList[0], 120)}` : "",
-    `Approve and run: /approve ${job.jobId}`,
-    `Status: /status ${job.jobId}`,
+    commandRef ? `Inspect scope: /scope ${commandRef}` : "",
+    commandRef && queueableChildCount > 0 ? `Queue all: /queueall ${commandRef}` : "",
   ]
     .filter(Boolean)
     .join("\n");

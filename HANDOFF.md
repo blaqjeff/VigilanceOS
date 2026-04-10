@@ -74,6 +74,7 @@ The following important local/source changes were reconciled:
 - `.gitignore` was fixed so `src/pipeline/memory.ts` is no longer hidden by the broad `memory.*` ignore rule
 - `PROJECT_SCOPE.md` exists in the main repo
 - `VIGILANCE_REQUIREMENTS.md` now points readers to `PROJECT_SCOPE.md`
+- `README.md` now documents Vigilance-OS itself instead of the generic challenge template
 
 ### Remaining runtime/integration blockers
 
@@ -102,6 +103,9 @@ The following important local/source changes were reconciled:
 - Telegram HITL is re-enabled in the local environment; readiness now reports Telegram as `ready` and backend startup logs show the Telegram bot plugin starting again
 - Telegram proactive delivery is no longer blocked by the old missing-send-handler bug, and it now prefers direct Bot API delivery before runtime send-handler fallback so alerts reach the operator chat without the old non-fatal Telegram memory-write noise
 - The Scout UI is now explicitly labeled as project-level discovery only; it should not be presented as asset-level Immunefi scope expansion until the watcher can explode per-project assets/docs/repos properly
+- Scout discovery is now split cleanly from execution: parent Scout projects stay in the discovery layer, each project exposes explicit child targets, and only queued child targets become real audit jobs
+- Scout child targets can now be queued one-by-one, as selected subsets, or all at once from the UI, and the same project-scope / child-queue flow is exposed through Telegram via `/scope`, `/queue`, and `/queueall`
+- Scout child fan-out now normalizes GitHub tree/blob/release links back to repo-root queue targets before creating jobs, which avoids polluting the audit queue with non-cloneable GitHub subpaths
 - Model readiness is no longer boot-time-only: `src/readiness.ts` and `src/plugins/plugin-ui-bridge/index.ts` now refresh the model probe live for the readiness panel and again right before audits start
 - Audit launch is now asynchronous at the backend, so `/vigilance/audit` accepts the job quickly and the scan/review lifecycle continues in the background instead of holding one request open through the whole run
 - Controlled Solana demo suppression is stronger now: paired `secure` reference examples are filtered out of ranked candidates for repos like `sealevel-attacks`, and opposite `secure` / `insecure` variants no longer merge into the same finding during dedupe
@@ -113,6 +117,7 @@ The following important local/source changes were reconciled:
 - Hosted folder uploads now show explicit `Uploading` / `Queueing` state in the UI so large transfers do not look idle and invite duplicate submissions
 - Terminal jobs can now be archived from the job-detail modal; archived jobs are hidden from the default queue and findings views but can still be fetched through the backend with `includeArchived=true`
 - Scout discovery is now richer at the project level: watcher snapshots and alerts keep asset counts, impact counts, repo counts, and linked non-GitHub resources/doc URLs instead of collapsing discovery down to only the first repo summary
+- Live smoke tests on `2026-04-10` verified the new Scout fan-out path: the watcher recovered after MCP warm-up, `/api/vigilance/scout` returned project discoveries with child targets, and `/api/vigilance/scout/queue` successfully created a pending approval child job while leaving the parent project in `discovered` / `partially_queued` state
 
 ### Important note about earlier failures
 

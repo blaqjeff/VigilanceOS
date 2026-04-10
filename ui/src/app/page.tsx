@@ -157,11 +157,23 @@ type ReadinessSnapshot = {
 
 type ScoutWatcherStatus = "idle" | "scheduled" | "running" | "blocked" | "error";
 
+type ScoutChildTarget = {
+  childId: string;
+  kind: "github_repo" | "web_asset" | "explorer_asset" | "resource";
+  label: string;
+  summary: string;
+  sourceUrl?: string;
+  tags: string[];
+  queueable: boolean;
+  auditTargetInput?: string;
+  queuedJobId?: string;
+  queuedJobState?: string;
+};
+
 type ScoutDiscovery = {
   projectKey: string;
-  jobId: string;
-  targetId: string;
-  state: string;
+  commandRef: string;
+  state: "discovered" | "partially_queued" | "queued";
   projectId?: string;
   projectName: string;
   category: "blockchain_dlt" | "smart_contract" | "websites_apps";
@@ -186,6 +198,9 @@ type ScoutDiscovery = {
   impactCount: number;
   repositoryCount: number;
   resourceCount: number;
+  childTargets: ScoutChildTarget[];
+  queueableChildCount: number;
+  queuedChildCount: number;
   rewardSummary: string[];
   scopeSummary: string[];
   maxBountyText?: string;
@@ -748,6 +763,43 @@ function scoutEventTone(event: ScoutDiscovery["lastEvent"]): string {
       return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
     default:
       return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  }
+}
+
+function scoutDiscoveryStateTone(state: ScoutDiscovery["state"]): string {
+  switch (state) {
+    case "queued":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+    case "partially_queued":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+    default:
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  }
+}
+
+function scoutChildTone(kind: ScoutChildTarget["kind"]): string {
+  switch (kind) {
+    case "github_repo":
+      return "border-cyan-400/30 bg-cyan-400/10 text-cyan-200";
+    case "web_asset":
+      return "border-blue-400/30 bg-blue-400/10 text-blue-200";
+    case "explorer_asset":
+      return "border-violet-400/30 bg-violet-400/10 text-violet-200";
+    default:
+      return "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  }
+}
+
+function scoutChildKindLabel(kind: ScoutChildTarget["kind"]): string {
+  switch (kind) {
+    case "github_repo":
+      return "repo";
+    case "web_asset":
+      return "web asset";
+    case "explorer_asset":
+      return "explorer asset";
+    default:
+      return "resource";
   }
 }
 
@@ -1652,6 +1704,9 @@ export default function Home() {
   const [stats, setStats] = React.useState<JobStats | null>(null);
   const [readiness, setReadiness] = React.useState<ReadinessSnapshot | null>(null);
   const [scout, setScout] = React.useState<ScoutWatcherSnapshot | null>(null);
+  const [expandedScoutProjects, setExpandedScoutProjects] = React.useState<Record<string, boolean>>({});
+  const [selectedScoutChildren, setSelectedScoutChildren] = React.useState<Record<string, string[]>>({});
+  const [scoutQueueBusyKey, setScoutQueueBusyKey] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
   const [findingRankMode, setFindingRankMode] =
@@ -1954,6 +2009,79 @@ export default function Home() {
       await refresh();
     } finally {
       setScoutBusy(false);
+    }
+  }
+
+  function toggleScoutProject(projectKey: string) {
+    setExpandedScoutProjects((current) => ({
+      ...current,
+      [projectKey]: !current[projectKey],
+    }));
+  }
+
+  function toggleScoutChild(projectKey: string, childId: string) {
+    setSelectedScoutChildren((current) => {
+      const existing = current[projectKey] ?? [];
+      const next = existing.includes(childId)
+        ? existing.filter((value) => value !== childId)
+        : [...existing, childId];
+
+      return {
+        ...current,
+        [projectKey]: next,
+      };
+    });
+  }
+
+  function setScoutChildSelection(projectKey: string, childIds: string[]) {
+    setSelectedScoutChildren((current) => ({
+      ...current,
+      [projectKey]: childIds,
+    }));
+  }
+
+  async function queueScoutTargets(
+    discovery: ScoutDiscovery,
+    options: { childIds?: string[]; queueAll?: boolean }
+  ) {
+    setScoutQueueBusyKey(discovery.projectKey);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/vigilance/scout/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectRef: discovery.projectKey,
+          childIds: options.childIds ?? [],
+          queueAll: options.queueAll ?? false,
+          roomId,
+        }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        setActionError(payload?.message ?? payload?.error ?? "Scout child queueing failed.");
+      } else {
+        const queuedJobs: AuditJob[] = [
+          ...(payload?.data?.createdJobs ?? []),
+          ...(payload?.data?.existingJobs ?? []),
+        ];
+        if (queuedJobs.length > 0) {
+          setSelectedJob(queuedJobs[0]);
+        }
+        if (options.queueAll) {
+          setScoutChildSelection(discovery.projectKey, []);
+        } else if (options.childIds?.length) {
+          setScoutChildSelection(
+            discovery.projectKey,
+            (selectedScoutChildren[discovery.projectKey] ?? []).filter(
+              (childId) => !options.childIds?.includes(childId)
+            )
+          );
+        }
+      }
+      await refresh();
+    } finally {
+      setScoutQueueBusyKey(null);
     }
   }
 
@@ -2466,10 +2594,20 @@ export default function Home() {
                 </div>
                 {scoutDiscoveries.length > 0 ? (
                   <div className="mt-3 space-y-3">
-                    {scoutDiscoveries.slice(0, 4).map((discovery) => {
-                      const linkedJob = jobs.find((job) => job.jobId === discovery.jobId) ?? null;
-                      const content = (
-                        <div className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left transition hover:border-cyan-400/20">
+                    {scoutDiscoveries.slice(0, 6).map((discovery) => {
+                      const isExpanded = Boolean(expandedScoutProjects[discovery.projectKey]);
+                      const scoutQueueBusy = scoutQueueBusyKey === discovery.projectKey;
+                      const queueableChildren = discovery.childTargets.filter((child) => child.queueable);
+                      const selectedIds = selectedScoutChildren[discovery.projectKey] ?? [];
+                      const selectedQueueableIds = queueableChildren
+                        .filter((child) => selectedIds.includes(child.childId))
+                        .map((child) => child.childId);
+
+                      return (
+                        <div
+                          key={discovery.projectKey}
+                          className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
@@ -2479,6 +2617,9 @@ export default function Home() {
                                 <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${scoutEventTone(discovery.lastEvent)}`}>
                                   {discovery.lastEvent}
                                 </span>
+                                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] ${scoutDiscoveryStateTone(discovery.state)}`}>
+                                  {discovery.state.replace(/_/g, " ")}
+                                </span>
                               </div>
                               <p className="mt-3 truncate text-sm font-medium text-white">{discovery.projectName}</p>
                               <p className="mt-2 text-xs text-cyan-200">
@@ -2487,7 +2628,7 @@ export default function Home() {
                               <p className="mt-1 text-xs text-slate-400">
                                 {summaryLine(discovery.scopeSummary, "Scope context pending")}
                               </p>
-                              <div className="mt-3 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-4">
+                              <div className="mt-3 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-5">
                                 <div className="rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2">
                                   <p className="uppercase tracking-[0.16em] text-slate-500">Assets</p>
                                   <p className="mt-1 text-sm font-semibold text-white">{discovery.assetCount}</p>
@@ -2504,22 +2645,19 @@ export default function Home() {
                                   <p className="uppercase tracking-[0.16em] text-slate-500">Resources</p>
                                   <p className="mt-1 text-sm font-semibold text-white">{discovery.resourceCount}</p>
                                 </div>
+                                <div className="rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2">
+                                  <p className="uppercase tracking-[0.16em] text-slate-500">Queueable</p>
+                                  <p className="mt-1 text-sm font-semibold text-white">
+                                    {discovery.queuedChildCount}/{discovery.queueableChildCount}
+                                  </p>
+                                </div>
                               </div>
+                              <p className="mt-2 text-[11px] text-slate-500">
+                                Telegram ref: {discovery.commandRef}
+                              </p>
                               {discovery.primaryRepository && (
-                                <p className="mt-2 truncate text-[11px] text-slate-500">
+                                <p className="mt-1 truncate text-[11px] text-slate-500">
                                   Primary repo: {discovery.primaryRepository}
-                                </p>
-                              )}
-                              {discovery.projectAssets.length > 0 && (
-                                <p className="mt-1 text-[11px] text-slate-500">
-                                  Assets: {discovery.projectAssets.slice(0, 2).map((asset) => asset.label).join(" | ")}
-                                  {discovery.projectAssets.length > 2 ? ` +${discovery.projectAssets.length - 2} more` : ""}
-                                </p>
-                              )}
-                              {discovery.projectResources.length > 0 && (
-                                <p className="mt-1 text-[11px] text-slate-500">
-                                  Resources: {discovery.projectResources.slice(0, 2).map((resource) => resource.label).join(" | ")}
-                                  {discovery.projectResources.length > 2 ? ` +${discovery.projectResources.length - 2} more` : ""}
                                 </p>
                               )}
                             </div>
@@ -2528,19 +2666,155 @@ export default function Home() {
                               <p className="mt-1">{discovery.refreshCount} sweeps</p>
                             </div>
                           </div>
-                        </div>
-                      );
 
-                      return linkedJob ? (
-                        <button
-                          key={discovery.projectKey}
-                          onClick={() => setSelectedJob(linkedJob)}
-                          className="w-full text-left"
-                        >
-                          {content}
-                        </button>
-                      ) : (
-                        <div key={discovery.projectKey}>{content}</div>
+                          <div className="mt-4 flex flex-wrap items-center gap-2">
+                            <button
+                              onClick={() => toggleScoutProject(discovery.projectKey)}
+                              className="rounded-xl border border-white/10 bg-slate-900/70 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-cyan-400/30 hover:text-white"
+                            >
+                              {isExpanded ? "Hide scope" : "Expand scope"}
+                            </button>
+                            <button
+                              onClick={() =>
+                                void queueScoutTargets(discovery, { queueAll: true })
+                              }
+                              disabled={
+                                scoutQueueBusy ||
+                                busy ||
+                                discovery.queueableChildCount === 0
+                              }
+                              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {scoutQueueBusy ? "Queueing..." : "Queue all queueable"}
+                            </button>
+                            <button
+                              onClick={() =>
+                                void queueScoutTargets(discovery, {
+                                  childIds: selectedQueueableIds,
+                                })
+                              }
+                              disabled={
+                                scoutQueueBusy ||
+                                busy ||
+                                selectedQueueableIds.length === 0
+                              }
+                              className="rounded-xl border border-blue-400/30 bg-blue-400/10 px-3 py-2 text-xs font-medium text-blue-100 transition hover:bg-blue-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Queue selected
+                            </button>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="mt-4 space-y-3">
+                              {queueableChildren.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    onClick={() =>
+                                      setScoutChildSelection(
+                                        discovery.projectKey,
+                                        queueableChildren.map((child) => child.childId)
+                                      )
+                                    }
+                                    className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-1.5 text-[11px] font-medium text-slate-300 transition hover:border-cyan-400/30 hover:text-white"
+                                  >
+                                    Select all queueable
+                                  </button>
+                                  <button
+                                    onClick={() =>
+                                      setScoutChildSelection(discovery.projectKey, [])
+                                    }
+                                    className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-1.5 text-[11px] font-medium text-slate-300 transition hover:border-cyan-400/30 hover:text-white"
+                                  >
+                                    Clear selection
+                                  </button>
+                                </div>
+                              )}
+
+                              <div className="space-y-2">
+                                {discovery.childTargets.map((child, index) => {
+                                  const linkedJob =
+                                    (child.queuedJobId
+                                      ? jobs.find((job) => job.jobId === child.queuedJobId)
+                                      : undefined) ?? null;
+                                  const childSelected = selectedIds.includes(child.childId);
+
+                                  return (
+                                    <div
+                                      key={child.childId}
+                                      className="rounded-2xl border border-white/10 bg-slate-900/70 p-3"
+                                    >
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0 flex-1">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="text-[11px] font-semibold text-slate-500">
+                                              {index + 1}.
+                                            </span>
+                                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${scoutChildTone(child.kind)}`}>
+                                              {scoutChildKindLabel(child.kind)}
+                                            </span>
+                                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                                              child.queueable
+                                                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                                                : "border-slate-500/30 bg-slate-500/10 text-slate-300"
+                                            }`}>
+                                              {child.queueable ? "queueable" : "context only"}
+                                            </span>
+                                            {child.queuedJobState && (
+                                              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] ${stateTone(child.queuedJobState as AuditJobState)}`}>
+                                                {child.queuedJobState.replace(/_/g, " ")}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <p className="mt-2 text-sm font-medium text-white">{child.label}</p>
+                                          <p className="mt-1 text-xs text-slate-400">{child.summary}</p>
+                                          {child.sourceUrl && (
+                                            <p className="mt-2 truncate text-[11px] text-slate-500">{child.sourceUrl}</p>
+                                          )}
+                                        </div>
+                                        <div className="flex flex-col items-end gap-2">
+                                          {child.queueable && (
+                                            <label className="flex items-center gap-2 text-[11px] text-slate-300">
+                                              <input
+                                                type="checkbox"
+                                                checked={childSelected}
+                                                onChange={() =>
+                                                  toggleScoutChild(discovery.projectKey, child.childId)
+                                                }
+                                                className="h-3.5 w-3.5 rounded border-white/20 bg-slate-950 text-cyan-400 focus:ring-cyan-400"
+                                              />
+                                              select
+                                            </label>
+                                          )}
+                                          {child.queueable && (
+                                            <button
+                                              onClick={() =>
+                                                void queueScoutTargets(discovery, {
+                                                  childIds: [child.childId],
+                                                })
+                                              }
+                                              disabled={scoutQueueBusy || busy}
+                                              className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-medium text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                              Queue
+                                            </button>
+                                          )}
+                                          {linkedJob && (
+                                            <button
+                                              onClick={() => setSelectedJob(linkedJob)}
+                                              className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-1.5 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400/30 hover:text-white"
+                                            >
+                                              Open job
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>

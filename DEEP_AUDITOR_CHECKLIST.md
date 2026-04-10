@@ -129,6 +129,7 @@ Done when:
 - [x] Show visible upload / queue progress for hosted folder uploads so large transfers do not look idle
 - [x] Send pending-approval Telegram alerts for custom UI-submitted targets so `/approve <jobId>` works outside Scout
 - [x] Expand Scout discovery from first-repo summaries to project-level scope cards with asset, repo, and resource counts without changing the GitHub/local audit path
+- [x] Fan Scout projects out into selectable child targets, queue one / selected / all queueable children, and keep parent discoveries out of the main audit queue
 - [x] Refresh model readiness live instead of relying on a stale boot-time snapshot
 - [x] Launch audits asynchronously from the backend so long-running jobs do not depend on a single held-open request
 - [x] Suppress paired `secure` reference examples from dominating controlled Solana demo targets

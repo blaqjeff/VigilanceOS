@@ -69,6 +69,7 @@ flowchart TD
 - Candidate findings are now reviewed individually, and the job-level outcome is derived from the full reviewed finding set rather than from one canonical report only.
 - Proof labels are now more honest, and replay artifacts are now repo-anchored guided harnesses, but they are still not validated or executed proof.
 - The operator UI now exposes candidate provenance, candidate counts, per-finding verdicts, lead/urgency labeling, and a findings gallery flattened by reviewed finding instead of by job-primary summary.
+- Scout discovery now sits in a separate project layer: project cards expose child targets, and only explicitly queued child targets become audit jobs.
 
 ## 3. Why The Current Version Was Built This Way
 

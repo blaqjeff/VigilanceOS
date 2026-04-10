@@ -12,7 +12,12 @@ import {
   getReadinessSnapshot,
   refreshModelReadinessSnapshot,
 } from "../../readiness.js";
-import { ensureScoutWatcher, getScoutWatcherSnapshot, refreshScoutWatcher } from "../../scout/watcher.js";
+import {
+  ensureScoutWatcher,
+  getScoutWatcherSnapshot,
+  queueScoutChildTargets,
+  refreshScoutWatcher,
+} from "../../scout/watcher.js";
 import type { IngestionResult } from "../../pipeline/types.js";
 import {
   formatApprovalRequestAlert,
@@ -610,6 +615,52 @@ const scoutRefreshRoute: Route = {
 };
 
 // ---------------------------------------------------------------------------
+// POST /vigilance/scout/queue
+// ---------------------------------------------------------------------------
+const scoutQueueRoute: Route = {
+  name: "vigilance-scout-queue",
+  path: "/vigilance/scout/queue",
+  type: "POST",
+  public: true,
+  handler: async (req: any, res: any, runtime: any) => {
+    try {
+      ensureScoutWatcher(runtime);
+
+      const projectRef = String(req.body?.projectRef ?? "").trim();
+      const queueAll = Boolean(req.body?.queueAll);
+      const childIds = Array.isArray(req.body?.childIds)
+        ? req.body.childIds.map((value: unknown) => String(value).trim()).filter(Boolean)
+        : [];
+
+      const result = await queueScoutChildTargets(runtime, {
+        projectRef,
+        childRefs: childIds,
+        queueAll,
+        roomId: getRoomId(req),
+        userId: getUserId(req),
+      });
+
+      const status = result.success ? 200 : 400;
+      return json(res, status, {
+        success: result.success,
+        message: result.message,
+        data: {
+          project: result.project,
+          createdJobs: result.createdJobs,
+          existingJobs: result.existingJobs,
+          selectedChildren: result.selectedChildren,
+          skippedChildren: result.skippedChildren,
+          scout: getScoutWatcherSnapshot(),
+        },
+      });
+    } catch (e) {
+      logger.error(`[UIBridge] scout queue failed: ${e}`);
+      return json(res, 500, { success: false, error: "internal error" });
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // GET /vigilance/jobs — list all jobs (optionally filtered by state)
 // ---------------------------------------------------------------------------
 const jobsListRoute: Route = {
@@ -742,6 +793,7 @@ export const uiBridgePlugin: Plugin = {
     runAuditRoute,
     scoutRoute,
     scoutRefreshRoute,
+    scoutQueueRoute,
     feedRoute,
     findingsRoute,
     readinessRoute,

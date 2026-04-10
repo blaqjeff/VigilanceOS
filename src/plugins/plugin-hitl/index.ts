@@ -27,6 +27,11 @@ import {
   matchesCommand,
   parseCommandArgument,
 } from "../../telegram/ops.js";
+import {
+  findScoutDiscovery,
+  listScoutDiscoveries,
+  queueScoutChildTargets,
+} from "../../scout/watcher.js";
 
 function extractScoutData(state?: State): any | null {
   const s = state as any;
@@ -134,6 +139,80 @@ function noJobText(kind: "approve" | "report" | "status"): string {
   }
 
   return "No matching audit job was found. Try /findings for recent reviewed jobs.";
+}
+
+function projectScopeText(
+  discovery:
+    | ReturnType<typeof findScoutDiscovery>
+    | undefined
+): string {
+  if (!discovery) {
+    const recent = listScoutDiscoveries().slice(0, 5);
+    if (recent.length === 0) {
+      return "No Scout projects are tracked yet. Refresh Scout first or wait for the next sweep.";
+    }
+
+    return [
+      "SCOUT PROJECTS",
+      ...recent.map(
+        (entry) =>
+          `- ${entry.commandRef} | ${entry.projectName} | ${entry.queueableChildCount} queueable child targets | /scope ${entry.commandRef}`
+      ),
+    ].join("\n");
+  }
+
+  const lines = [
+    "SCOUT PROJECT SCOPE",
+    `Project: ${discovery.projectName}`,
+    `Ref: ${discovery.commandRef}`,
+    `State: ${discovery.state}`,
+    `Scope: ${discovery.assetCount} assets | ${discovery.impactCount} impacts | ${discovery.repositoryCount} repos | ${discovery.resourceCount} resources`,
+  ];
+
+  if (discovery.childTargets.length === 0) {
+    lines.push("No child targets are available yet.");
+    return lines.join("\n");
+  }
+
+  lines.push("Child targets:");
+  discovery.childTargets.slice(0, 12).forEach((child, index) => {
+    const parts = [
+      `${index + 1}. ${child.label}`,
+      child.kind,
+      child.queueable ? "queueable" : "context only",
+      child.queuedJobId ? `job ${child.queuedJobId}` : "",
+    ].filter(Boolean);
+    lines.push(parts.join(" | "));
+  });
+
+  if (discovery.childTargets.length > 12) {
+    lines.push(`...and ${discovery.childTargets.length - 12} more child targets`);
+  }
+
+  if (discovery.queueableChildCount > 0) {
+    lines.push(`Queue all: /queueall ${discovery.commandRef}`);
+    lines.push(`Queue one or more: /queue ${discovery.commandRef} 1,2`);
+  }
+
+  return lines.join("\n");
+}
+
+function parseQueueCommand(argument: string): { projectRef?: string; childRefs: string[] } {
+  const trimmed = argument.trim();
+  if (!trimmed) {
+    return { childRefs: [] };
+  }
+
+  const [projectRef, ...rest] = trimmed.split(/\s+/);
+  const childRefs = rest.join(" ")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return {
+    projectRef,
+    childRefs,
+  };
 }
 
 const JOB_STATES_FOR_STATUS: AuditJobState[] = [
@@ -417,6 +496,98 @@ export const reportAction: Action = {
   ],
 };
 
+export const scopeAction: Action = {
+  name: "GET_SCOUT_SCOPE",
+  description:
+    "Shows the latest Scout projects or the child targets under one specific project.",
+  similes: ["/scope", "SCOUT_SCOPE", "SHOW_SCOPE"],
+  validate: async (_runtime: IAgentRuntime, message: Memory): Promise<boolean> =>
+    matchesCommand(message, "scope"),
+  handler: async (
+    _runtime: IAgentRuntime,
+    message: Memory,
+    _state?: State,
+    _options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
+    const reference = parseCommandArgument(message, "scope");
+    const discovery = findScoutDiscovery(reference || undefined);
+    const text = projectScopeText(discovery);
+    if (callback) await callback({ text, action: "SCOUT_SCOPE_READY" });
+    return { success: true, text } as any;
+  },
+};
+
+export const queueScoutChildrenAction: Action = {
+  name: "QUEUE_SCOUT_CHILDREN",
+  description:
+    "Queues one or more Scout child targets into real audit jobs waiting for approval.",
+  similes: ["/queue", "QUEUE_SCOUT_TARGET", "QUEUE_SCOUT_CHILD"],
+  validate: async (_runtime: IAgentRuntime, message: Memory): Promise<boolean> =>
+    matchesCommand(message, "queue"),
+  handler: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+    _state?: State,
+    _options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
+    const { projectRef, childRefs } = parseQueueCommand(parseCommandArgument(message, "queue"));
+    const result = await queueScoutChildTargets(runtime, {
+      projectRef,
+      childRefs,
+      queueAll: false,
+      roomId: messageRoomId(message),
+    });
+
+    const lines = [result.message];
+    for (const job of [...result.createdJobs, ...result.existingJobs].slice(0, 8)) {
+      lines.push(`- ${job.jobId} | ${job.target.displayName} | /approve ${job.jobId}`);
+    }
+    if (callback) {
+      await callback({
+        text: lines.join("\n"),
+        action: result.success ? "SCOUT_CHILDREN_QUEUED" : "SCOUT_QUEUE_FAILED",
+      });
+    }
+    return { success: result.success, text: lines.join("\n") } as any;
+  },
+};
+
+export const queueAllScoutChildrenAction: Action = {
+  name: "QUEUE_ALL_SCOUT_CHILDREN",
+  description: "Queues all queueable child targets for a Scout project.",
+  similes: ["/queueall", "QUEUE_ALL_SCOUT_TARGETS", "QUEUE_SCOUT_ALL"],
+  validate: async (_runtime: IAgentRuntime, message: Memory): Promise<boolean> =>
+    matchesCommand(message, "queueall"),
+  handler: async (
+    runtime: IAgentRuntime,
+    message: Memory,
+    _state?: State,
+    _options?: HandlerOptions,
+    callback?: HandlerCallback
+  ): Promise<ActionResult> => {
+    const projectRef = parseCommandArgument(message, "queueall");
+    const result = await queueScoutChildTargets(runtime, {
+      projectRef: projectRef || undefined,
+      queueAll: true,
+      roomId: messageRoomId(message),
+    });
+
+    const lines = [result.message];
+    for (const job of [...result.createdJobs, ...result.existingJobs].slice(0, 8)) {
+      lines.push(`- ${job.jobId} | ${job.target.displayName} | /approve ${job.jobId}`);
+    }
+    if (callback) {
+      await callback({
+        text: lines.join("\n"),
+        action: result.success ? "SCOUT_CHILDREN_QUEUED" : "SCOUT_QUEUE_FAILED",
+      });
+    }
+    return { success: result.success, text: lines.join("\n") } as any;
+  },
+};
+
 export const findingsAction: Action = {
   name: "LIST_FINDINGS",
   description: "Lists recent published findings and the analyst-review queue.",
@@ -506,11 +677,14 @@ export const statusAction: Action = {
 export const hitlPlugin: Plugin = {
   name: "HumanInTheLoopGate",
   description:
-    "Telegram-facing HITL controls for approval, status, reports, and findings over the canonical JobStore lifecycle.",
+    "Telegram-facing HITL controls for Scout scope inspection, queueing child targets, approval, status, reports, and findings over the canonical JobStore lifecycle.",
   actions: [
     requestApprovalAction,
     approveAction,
     reportAction,
+    scopeAction,
+    queueScoutChildrenAction,
+    queueAllScoutChildrenAction,
     findingsAction,
     statusAction,
   ],
