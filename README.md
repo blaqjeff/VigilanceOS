@@ -164,7 +164,7 @@ Important variables:
 npm run dev
 ```
 
-That starts:
+That is now the standard cross-platform development command. It starts:
 
 - ElizaOS backend on `http://127.0.0.1:3001`
 - Next.js UI on `http://127.0.0.1:4001`
@@ -173,10 +173,19 @@ Useful commands:
 
 ```powershell
 npm run stop
+npm run dev:stack
+npm run start:stack
+npm run stop:stack
 npm run build
 npm run build:ui
 npm run build:all
 ```
+
+Notes:
+
+- `npm run dev` is the preferred portable development command
+- `npm run start` is the portable production-style command after building
+- the `*:stack` scripts are optional Windows helpers that perform extra port cleanup and health checks
 
 ## Usage
 
@@ -256,6 +265,7 @@ Current usage patterns:
 Self-hosting runbook:
 
 - [nos_job_def/SELF_HOST_MODEL_RUNBOOK.md](/C:/VigilanceOS/nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
+- [DEPLOYMENT.md](/C:/VigilanceOS/DEPLOYMENT.md)
 
 ## Readiness Model
 

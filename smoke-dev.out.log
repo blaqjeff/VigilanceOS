@@ -1,0 +1,375 @@
+
+> nosana-eliza-agent@0.1.0 dev
+> node ./scripts/run-stack.mjs dev
+
+
+> nosana-eliza-agent@0.1.0 dev:eliza
+> npm run build:backend && node ./scripts/run-eliza.mjs dev
+
+
+> nosana-eliza-agent@0.1.0 dev:ui
+> npm --prefix ui run dev
+
+
+> nosana-eliza-agent@0.1.0 build:backend
+> tsc -p tsconfig.json
+
+
+> ui@0.1.0 dev
+> next dev --hostname 0.0.0.0 --port 4001
+
+▲ Next.js 16.2.1 (Turbopack)
+- Local:         http://localhost:4001
+- Network:       http://0.0.0.0:4001
+✓ Ready in 1078ms
+- Experiments (use with caution):
+  ✓ workerThreads
+
+ GET /api/vigilance/jobs?limit=50 502 in 1446ms (next.js: 749ms, application-code: 697ms)
+ GET /api/vigilance/readiness 502 in 1432ms (next.js: 886ms, application-code: 546ms)
+ GET /api/vigilance/scout 502 in 1436ms (next.js: 985ms, application-code: 451ms)
+ GET /api/vigilance/readiness 200 in 98ms (next.js: 69ms, application-code: 29ms)
+ GET /api/vigilance/scout 200 in 94ms (next.js: 79ms, application-code: 15ms)
+ GET /api/vigilance/jobs?limit=50 200 in 105ms (next.js: 38ms, application-code: 67ms)
+ GET / 200 in 1926ms (next.js: 1251ms, application-code: 675ms)
+ GET /api/vigilance/jobs?limit=50 502 in 40ms (next.js: 9ms, application-code: 31ms)
+ GET /api/vigilance/readiness 502 in 61ms (next.js: 23ms, application-code: 38ms)
+ GET /api/vigilance/scout 502 in 64ms (next.js: 23ms, application-code: 41ms)
+[vigilance][readiness] Immunefi MCP: ready - Python dependencies for the Immunefi MCP server are installed. (Python: python; Script: mcp-servers\immunefi\immunefi.py)
+[vigilance][readiness] Telegram: ready - Telegram bot token is configured.
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
+[36m Info      [39m [DB] Database directory configured (dataDir=C:\VigilanceOS\.eliza\.elizadb)
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  enable debug logging with { debug: true }
+[36m Info      [39m [DB] Running database migrations
+ GET /api/vigilance/jobs?limit=50 502 in 27ms (next.js: 4ms, application-code: 23ms)
+ GET /api/vigilance/readiness 502 in 29ms (next.js: 13ms, application-code: 16ms)
+ GET /api/vigilance/scout 502 in 30ms (next.js: 17ms, application-code: 13ms)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Plugin schemas discovered (schemasDiscovered=1, totalPlugins=1)
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m [DB] Checking for server... (serverId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [HTTP] Initializing ElizaOS
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Global ElizaOS instance set
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Global AgentServer instance set
+[36m Info      [39m [HTTP] Public health check endpoints enabled: /healthz and /health (rate limited: 100 req/min)
+[36m Info      [39m [HTTP] Configuring authentication middleware...
+[36m Info      [39m [HTTP] Serving static files (clientPath=C:\VigilanceOS\node_modules\@elizaos\server\dist\client)
+[36m Info      [39m [WS] SocketIO router initialized (agentCount=0)
+AgentServer is listening on port 3001
+[36m Info      [39m Initializing MCP plugin...
+[36m Info      [39m #Scout  [PLUGIN:SQL] plugin-sql (node) init starting
+[36m Info      [39m Initializing MCP plugin...
+[36m Info      [39m #Auditor  [PLUGIN:SQL] plugin-sql (node) init starting
+[36m Info      [39m #Reviewer  [PLUGIN:SQL] plugin-sql (node) init starting
+[36m Info      [39m #Scout  [PLUGIN:SQL] No pre-registered database adapter detected; registering adapter
+[36m Info      [39m #Auditor  [PLUGIN:SQL] No pre-registered database adapter detected; registering adapter
+[36m Info      [39m #Reviewer  [PLUGIN:SQL] No pre-registered database adapter detected; registering adapter
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+[36m Info      [39m #Scout  [PLUGIN:SQL] Database adapter created and registered
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+[36m Info      [39m #Auditor  [PLUGIN:SQL] Database adapter created and registered
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+[36m Info      [39m #Reviewer  [PLUGIN:SQL] Database adapter created and registered
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m #Scout  [PLUGIN:BOOTSTRAP:SERVICE:EMBEDDING] Starting embedding generation service
+[36m Info      [39m [PLUGIN:TELEGRAM] Starting Telegram bot
+[36m Info      [39m #Auditor  [PLUGIN:BOOTSTRAP:SERVICE:EMBEDDING] Starting embedding generation service
+[36m Info      [39m #Reviewer  [PLUGIN:BOOTSTRAP:SERVICE:EMBEDDING] Starting embedding generation service
+[36m Info      [39m [AGENT] Successfully registered agent with core services
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Subscribing to internal message bus
+[36m Info      [39m [AGENT] Auto-associated agent with message server (messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [AGENT] Successfully registered agent with core services
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Subscribing to internal message bus
+[36m Info      [39m [AGENT] Auto-associated agent with message server (messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [AGENT] Successfully registered agent with core services
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Subscribing to internal message bus
+[36m Info      [39m [AGENT] Auto-associated agent with message server (messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [AGENT] Started agents (count=3)
+[vigilance] dev backend listening on http://127.0.0.1:3001
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Agent subscribed to servers (serverCount=1, messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Agent subscribed to servers (serverCount=1, messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Agent subscribed to servers (serverCount=1, messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Fetched channels from server (messageServerId=00000000-0000-0000-0000-000000000000, channelCount=2)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Loaded valid channel IDs from servers (channelCount=2, serverCount=1)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Fetched channels from server (messageServerId=00000000-0000-0000-0000-000000000000, channelCount=2)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Loaded valid channel IDs from servers (channelCount=2, serverCount=1)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Fetched channels from server (messageServerId=00000000-0000-0000-0000-000000000000, channelCount=2)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Loaded valid channel IDs from servers (channelCount=2, serverCount=1)
+ GET /api/vigilance/jobs?limit=50 200 in 128ms (next.js: 7ms, application-code: 120ms)
+ GET /api/vigilance/scout 200 in 132ms (next.js: 32ms, application-code: 101ms)
+ GET /api/vigilance/readiness 200 in 619ms (next.js: 21ms, application-code: 599ms)
+[36m Info      [39m [MCP] Connected 1/1 in 2233ms (immunefi:18)
+ GET /api/vigilance/jobs?limit=50 200 in 49ms (next.js: 16ms, application-code: 33ms)
+ GET /api/vigilance/scout 200 in 44ms (next.js: 31ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 548ms (next.js: 27ms, application-code: 521ms)
+ GET /api/vigilance/jobs?limit=50 200 in 45ms (next.js: 13ms, application-code: 32ms)
+ GET /api/vigilance/scout 200 in 43ms (next.js: 30ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 544ms (next.js: 23ms, application-code: 521ms)
+ GET /api/vigilance/jobs?limit=50 200 in 50ms (next.js: 13ms, application-code: 38ms)
+ GET /api/vigilance/scout 200 in 52ms (next.js: 39ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 920ms (next.js: 28ms, application-code: 892ms)
+ GET /api/vigilance/jobs?limit=50 200 in 27ms (next.js: 5ms, application-code: 22ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 17ms, application-code: 11ms)
+ GET /api/vigilance/readiness 200 in 535ms (next.js: 13ms, application-code: 523ms)
+ GET /api/vigilance/jobs?limit=50 200 in 24ms (next.js: 5ms, application-code: 19ms)
+ GET /api/vigilance/scout 200 in 26ms (next.js: 16ms, application-code: 10ms)
+ GET /api/vigilance/readiness 200 in 526ms (next.js: 10ms, application-code: 516ms)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+ GET /api/vigilance/jobs?limit=50 200 in 26ms (next.js: 6ms, application-code: 19ms)
+ GET /api/vigilance/scout 200 in 29ms (next.js: 14ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 504ms (next.js: 11ms, application-code: 493ms)
+ GET /api/vigilance/jobs?limit=50 200 in 34ms (next.js: 11ms, application-code: 23ms)
+ GET /api/vigilance/scout 200 in 43ms (next.js: 25ms, application-code: 18ms)
+ GET /api/vigilance/readiness 200 in 499ms (next.js: 19ms, application-code: 481ms)
+ GET /api/vigilance/jobs?limit=50 200 in 38ms (next.js: 13ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 41ms (next.js: 25ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 513ms (next.js: 19ms, application-code: 494ms)
+ GET /api/vigilance/jobs?limit=50 200 in 36ms (next.js: 12ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 43ms (next.js: 26ms, application-code: 17ms)
+ GET /api/vigilance/readiness 200 in 517ms (next.js: 19ms, application-code: 498ms)
+ GET / 200 in 62ms (next.js: 3ms, application-code: 59ms)
+ GET /api/vigilance/jobs?limit=50 200 in 18ms (next.js: 3ms, application-code: 15ms)
+ GET /api/vigilance/scout 200 in 23ms (next.js: 12ms, application-code: 11ms)
+ GET /api/vigilance/feed?status=pending%2Capproved 200 in 58ms (next.js: 41ms, application-code: 17ms)
+ GET /api/vigilance/readiness 200 in 491ms (next.js: 9ms, application-code: 483ms)
+ GET /api/vigilance/jobs?limit=50 200 in 31ms (next.js: 8ms, application-code: 23ms)
+ GET /api/vigilance/scout 200 in 35ms (next.js: 19ms, application-code: 16ms)
+ GET /api/vigilance/readiness 200 in 497ms (next.js: 12ms, application-code: 484ms)
+ GET /api/vigilance/jobs?limit=50 200 in 23ms (next.js: 7ms, application-code: 16ms)
+ GET /api/vigilance/scout 200 in 22ms (next.js: 10ms, application-code: 12ms)
+ GET /api/vigilance/readiness 200 in 483ms (next.js: 3ms, application-code: 480ms)
+ GET /api/vigilance/jobs?limit=50 200 in 36ms (next.js: 8ms, application-code: 27ms)
+ GET /api/vigilance/scout 200 in 42ms (next.js: 22ms, application-code: 20ms)
+ GET /api/vigilance/readiness 200 in 520ms (next.js: 17ms, application-code: 503ms)
+ GET /api/vigilance/jobs?limit=50 200 in 23ms (next.js: 3ms, application-code: 19ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 15ms, application-code: 12ms)
+ GET /api/vigilance/readiness 200 in 506ms (next.js: 8ms, application-code: 498ms)
+ GET /api/vigilance/jobs?limit=50 200 in 28ms (next.js: 7ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 31ms (next.js: 18ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 503ms (next.js: 14ms, application-code: 489ms)
+ GET /api/vigilance/jobs?limit=50 200 in 28ms (next.js: 8ms, application-code: 20ms)
+ GET /api/vigilance/scout 200 in 32ms (next.js: 19ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 513ms (next.js: 13ms, application-code: 500ms)
+ GET / 200 in 65ms (next.js: 4ms, application-code: 61ms)
+ GET /api/vigilance/feed?status=pending%2Capproved 200 in 14ms (next.js: 3ms, application-code: 11ms)
+ GET /api/vigilance/jobs?limit=50 200 in 140ms (next.js: 5ms, application-code: 135ms)
+ GET /api/vigilance/scout 200 in 167ms (next.js: 26ms, application-code: 141ms)
+ GET /api/vigilance/scout 200 in 112ms (next.js: 13ms, application-code: 100ms)
+ GET /api/vigilance/jobs?limit=50 200 in 169ms (next.js: 49ms, application-code: 119ms)
+ GET /api/vigilance/readiness 200 in 2.0s (next.js: 18ms, application-code: 2.0s)
+ GET /api/vigilance/readiness 200 in 538ms (next.js: 4ms, application-code: 535ms)
+ GET /api/vigilance/jobs?limit=50 200 in 18ms (next.js: 3ms, application-code: 16ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 12ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 925ms (next.js: 8ms, application-code: 917ms)
+ GET /api/vigilance/jobs?limit=50 200 in 49ms (next.js: 16ms, application-code: 34ms)
+ GET /api/vigilance/scout 200 in 52ms (next.js: 27ms, application-code: 25ms)
+ GET /api/vigilance/readiness 200 in 397ms (next.js: 23ms, application-code: 374ms)
+ GET /api/vigilance/jobs?limit=50 200 in 44ms (next.js: 14ms, application-code: 30ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 11ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 394ms (next.js: 23ms, application-code: 370ms)
+ GET /api/vigilance/jobs?limit=50 200 in 22ms (next.js: 3ms, application-code: 20ms)
+ GET /api/vigilance/scout 200 in 29ms (next.js: 14ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 365ms (next.js: 9ms, application-code: 357ms)
+ GET /api/vigilance/jobs?limit=50 200 in 72ms (next.js: 15ms, application-code: 57ms)
+ GET /api/vigilance/scout 200 in 79ms (next.js: 44ms, application-code: 35ms)
+ GET /api/vigilance/readiness 200 in 572ms (next.js: 33ms, application-code: 539ms)
+ GET /api/vigilance/jobs?limit=50 200 in 45ms (next.js: 10ms, application-code: 35ms)
+ GET /api/vigilance/scout 200 in 51ms (next.js: 30ms, application-code: 21ms)
+ GET /api/vigilance/readiness 200 in 545ms (next.js: 20ms, application-code: 525ms)
+ GET /api/vigilance/jobs?limit=50 200 in 30ms (next.js: 4ms, application-code: 26ms)
+ GET /api/vigilance/scout 200 in 37ms (next.js: 18ms, application-code: 18ms)
+ GET /api/vigilance/readiness 200 in 553ms (next.js: 12ms, application-code: 541ms)
+ GET /api/vigilance/jobs?limit=50 200 in 24ms (next.js: 5ms, application-code: 20ms)
+ GET /api/vigilance/scout 200 in 23ms (next.js: 8ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 492ms (next.js: 11ms, application-code: 481ms)
+ GET /api/vigilance/jobs?limit=50 200 in 44ms (next.js: 13ms, application-code: 31ms)
+ GET /api/vigilance/scout 200 in 46ms (next.js: 25ms, application-code: 21ms)
+ GET /api/vigilance/readiness 200 in 508ms (next.js: 19ms, application-code: 490ms)
+ GET /api/vigilance/jobs?limit=50 200 in 52ms (next.js: 11ms, application-code: 41ms)
+ GET /api/vigilance/scout 200 in 44ms (next.js: 11ms, application-code: 33ms)
+ GET /api/vigilance/readiness 200 in 540ms (next.js: 17ms, application-code: 523ms)
+ GET /api/vigilance/jobs?limit=50 200 in 62ms (next.js: 13ms, application-code: 49ms)
+ GET /api/vigilance/scout 200 in 69ms (next.js: 44ms, application-code: 25ms)
+ GET /api/vigilance/readiness 200 in 529ms (next.js: 31ms, application-code: 497ms)
+ GET /api/vigilance/jobs?limit=50 200 in 57ms (next.js: 16ms, application-code: 41ms)
+ GET /api/vigilance/scout 200 in 62ms (next.js: 33ms, application-code: 29ms)
+ GET /api/vigilance/readiness 200 in 518ms (next.js: 27ms, application-code: 491ms)
+ GET /api/vigilance/jobs?limit=50 200 in 43ms (next.js: 10ms, application-code: 33ms)
+ GET /api/vigilance/scout 200 in 50ms (next.js: 28ms, application-code: 22ms)
+ GET /api/vigilance/readiness 200 in 504ms (next.js: 21ms, application-code: 483ms)
+ GET /api/vigilance/jobs?limit=50 200 in 33ms (next.js: 5ms, application-code: 28ms)
+ GET /api/vigilance/scout 200 in 43ms (next.js: 21ms, application-code: 22ms)
+ GET /api/vigilance/readiness 200 in 497ms (next.js: 14ms, application-code: 483ms)
+ GET /api/vigilance/jobs?limit=50 200 in 104ms (next.js: 12ms, application-code: 92ms)
+ GET /api/vigilance/scout 200 in 131ms (next.js: 66ms, application-code: 65ms)
+ GET /api/vigilance/readiness 200 in 460ms (next.js: 38ms, application-code: 423ms)
+ GET /api/vigilance/jobs?limit=50 200 in 56ms (next.js: 10ms, application-code: 46ms)
+ GET /api/vigilance/scout 200 in 64ms (next.js: 35ms, application-code: 29ms)
+ GET /api/vigilance/readiness 200 in 822ms (next.js: 23ms, application-code: 799ms)
+ GET /api/vigilance/jobs?limit=50 200 in 28ms (next.js: 6ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 32ms (next.js: 16ms, application-code: 16ms)
+ GET /api/vigilance/readiness 200 in 491ms (next.js: 11ms, application-code: 480ms)
+ GET /api/vigilance/jobs?limit=50 200 in 31ms (next.js: 6ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 39ms (next.js: 19ms, application-code: 20ms)
+ GET /api/vigilance/readiness 200 in 490ms (next.js: 13ms, application-code: 478ms)
+ GET /api/vigilance/jobs?limit=50 200 in 20ms (next.js: 3ms, application-code: 17ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 14ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 494ms (next.js: 9ms, application-code: 485ms)
+ GET /api/vigilance/jobs?limit=50 200 in 56ms (next.js: 17ms, application-code: 38ms)
+ GET /api/vigilance/scout 200 in 63ms (next.js: 31ms, application-code: 32ms)
+ GET /api/vigilance/readiness 200 in 548ms (next.js: 26ms, application-code: 522ms)
+ GET /api/vigilance/jobs?limit=50 200 in 25ms (next.js: 3ms, application-code: 22ms)
+ GET /api/vigilance/scout 200 in 30ms (next.js: 18ms, application-code: 12ms)
+ GET /api/vigilance/readiness 200 in 505ms (next.js: 12ms, application-code: 493ms)
+ GET /api/vigilance/jobs?limit=50 200 in 29ms (next.js: 4ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 34ms (next.js: 20ms, application-code: 14ms)
+ GET /api/vigilance/readiness 200 in 409ms (next.js: 14ms, application-code: 395ms)
+ GET /api/vigilance/jobs?limit=50 200 in 27ms (next.js: 6ms, application-code: 20ms)
+ GET /api/vigilance/scout 200 in 33ms (next.js: 18ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 1375ms (next.js: 14ms, application-code: 1362ms)
+ GET /api/vigilance/jobs?limit=50 200 in 30ms (next.js: 6ms, application-code: 24ms)
+ GET /api/vigilance/scout 200 in 37ms (next.js: 19ms, application-code: 18ms)
+ GET /api/vigilance/readiness 200 in 1096ms (next.js: 14ms, application-code: 1082ms)
+ GET /api/vigilance/jobs?limit=50 200 in 24ms (next.js: 3ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 31ms (next.js: 16ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 951ms (next.js: 10ms, application-code: 941ms)
+ GET /api/vigilance/jobs?limit=50 200 in 46ms (next.js: 17ms, application-code: 29ms)
+ GET /api/vigilance/scout 200 in 58ms (next.js: 31ms, application-code: 27ms)
+ GET /api/vigilance/readiness 200 in 838ms (next.js: 27ms, application-code: 811ms)
+ GET /api/vigilance/jobs?limit=50 200 in 30ms (next.js: 5ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 36ms (next.js: 20ms, application-code: 16ms)
+ GET /api/vigilance/readiness 200 in 758ms (next.js: 14ms, application-code: 744ms)
+ GET /api/vigilance/jobs?limit=50 200 in 26ms (next.js: 4ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 23ms (next.js: 10ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 1007ms (next.js: 12ms, application-code: 995ms)
+ GET /api/vigilance/jobs?limit=50 200 in 30ms (next.js: 6ms, application-code: 24ms)
+ GET /api/vigilance/scout 200 in 21ms (next.js: 7ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 698ms (next.js: 16ms, application-code: 682ms)
+ GET /api/vigilance/jobs?limit=50 200 in 43ms (next.js: 12ms, application-code: 31ms)
+ GET /api/vigilance/scout 200 in 31ms (next.js: 13ms, application-code: 18ms)
+ GET /api/vigilance/readiness 200 in 650ms (next.js: 18ms, application-code: 632ms)
+ GET /api/vigilance/jobs?limit=50 200 in 76ms (next.js: 12ms, application-code: 65ms)
+ GET /api/vigilance/scout 200 in 80ms (next.js: 37ms, application-code: 43ms)
+ GET /api/vigilance/readiness 200 in 668ms (next.js: 27ms, application-code: 641ms)
+ GET / 200 in 96ms (next.js: 3ms, application-code: 93ms)
+ GET /api/vigilance/feed?status=pending%2Capproved 200 in 9ms (next.js: 3ms, application-code: 6ms)
+ GET /api/vigilance/jobs?limit=50 200 in 33ms (next.js: 10ms, application-code: 23ms)
+ GET /api/vigilance/scout 200 in 37ms (next.js: 23ms, application-code: 14ms)
+ GET /api/vigilance/readiness 200 in 632ms (next.js: 17ms, application-code: 616ms)
+ GET /api/vigilance/jobs?limit=50 200 in 20ms (next.js: 3ms, application-code: 17ms)
+ GET /api/vigilance/scout 200 in 24ms (next.js: 12ms, application-code: 12ms)
+ GET /api/vigilance/readiness 200 in 602ms (next.js: 7ms, application-code: 595ms)
+ GET /api/vigilance/jobs?limit=50 200 in 29ms (next.js: 6ms, application-code: 23ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 11ms, application-code: 16ms)
+ GET /api/vigilance/readiness 200 in 711ms (next.js: 12ms, application-code: 698ms)
+ GET /api/vigilance/jobs?limit=50 200 in 30ms (next.js: 9ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 33ms (next.js: 20ms, application-code: 14ms)
+ GET /api/vigilance/readiness 200 in 646ms (next.js: 15ms, application-code: 631ms)
+ GET /api/vigilance/jobs?limit=50 200 in 35ms (next.js: 4ms, application-code: 31ms)
+ GET /api/vigilance/scout 200 in 46ms (next.js: 21ms, application-code: 25ms)
+ GET /api/vigilance/readiness 200 in 635ms (next.js: 14ms, application-code: 621ms)
+ GET /api/vigilance/jobs?limit=50 200 in 35ms (next.js: 6ms, application-code: 29ms)
+ GET /api/vigilance/scout 200 in 43ms (next.js: 25ms, application-code: 17ms)
+ GET /api/vigilance/readiness 200 in 624ms (next.js: 16ms, application-code: 608ms)
+ GET /api/vigilance/jobs?limit=50 200 in 38ms (next.js: 10ms, application-code: 28ms)
+ GET /api/vigilance/scout 200 in 35ms (next.js: 13ms, application-code: 22ms)
+ GET /api/vigilance/readiness 200 in 620ms (next.js: 19ms, application-code: 601ms)
+ GET /api/vigilance/jobs?limit=50 200 in 33ms (next.js: 8ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 41ms (next.js: 22ms, application-code: 19ms)
+ GET /api/vigilance/readiness 200 in 620ms (next.js: 16ms, application-code: 605ms)
+ GET / 200 in 76ms (next.js: 5ms, application-code: 71ms)
+ GET /api/vigilance/feed?status=pending%2Capproved 200 in 14ms (next.js: 4ms, application-code: 10ms)
+ GET /api/vigilance/jobs?limit=50 200 in 31ms (next.js: 6ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 37ms (next.js: 20ms, application-code: 17ms)
+ GET /api/vigilance/readiness 200 in 611ms (next.js: 14ms, application-code: 597ms)
+ GET /api/vigilance/jobs?limit=50 200 in 28ms (next.js: 5ms, application-code: 23ms)
+ GET /api/vigilance/scout 200 in 27ms (next.js: 9ms, application-code: 18ms)
+ GET /api/vigilance/readiness 200 in 455ms (next.js: 13ms, application-code: 442ms)
+ GET /api/vigilance/jobs?limit=50 200 in 62ms (next.js: 6ms, application-code: 56ms)
+ GET /api/vigilance/scout 200 in 67ms (next.js: 31ms, application-code: 36ms)
+ GET /api/vigilance/readiness 200 in 622ms (next.js: 20ms, application-code: 602ms)
+ GET /api/vigilance/jobs?limit=50 200 in 39ms (next.js: 13ms, application-code: 26ms)
+ GET /api/vigilance/scout 200 in 41ms (next.js: 21ms, application-code: 20ms)
+ GET /api/vigilance/readiness 200 in 609ms (next.js: 28ms, application-code: 581ms)
+ GET /api/vigilance/jobs?limit=50 200 in 29ms (next.js: 8ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 23ms (next.js: 10ms, application-code: 14ms)
+ GET /api/vigilance/readiness 200 in 578ms (next.js: 3ms, application-code: 575ms)
+ GET /api/vigilance/jobs?limit=50 200 in 37ms (next.js: 11ms, application-code: 26ms)
+ GET /api/vigilance/scout 200 in 24ms (next.js: 10ms, application-code: 14ms)
+ GET /api/vigilance/readiness 200 in 587ms (next.js: 17ms, application-code: 570ms)
+ GET /api/vigilance/jobs?limit=50 200 in 48ms (next.js: 11ms, application-code: 37ms)
+ GET /api/vigilance/scout 200 in 54ms (next.js: 34ms, application-code: 20ms)
+ GET /api/vigilance/readiness 200 in 908ms (next.js: 24ms, application-code: 884ms)
+ GET /api/vigilance/jobs?limit=50 200 in 34ms (next.js: 6ms, application-code: 28ms)
+ GET /api/vigilance/scout 200 in 39ms (next.js: 22ms, application-code: 18ms)
+ GET /api/vigilance/readiness 200 in 893ms (next.js: 14ms, application-code: 879ms)
+ GET /api/vigilance/jobs?limit=50 200 in 28ms (next.js: 8ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 32ms (next.js: 18ms, application-code: 14ms)
+ GET /api/vigilance/readiness 200 in 589ms (next.js: 13ms, application-code: 576ms)
+ GET /api/vigilance/jobs?limit=50 200 in 26ms (next.js: 5ms, application-code: 21ms)
+ GET /api/vigilance/scout 200 in 33ms (next.js: 16ms, application-code: 16ms)
+ GET /api/vigilance/readiness 200 in 572ms (next.js: 11ms, application-code: 561ms)
+ GET /api/vigilance/jobs?limit=50 200 in 39ms (next.js: 10ms, application-code: 29ms)
+ GET /api/vigilance/scout 200 in 30ms (next.js: 14ms, application-code: 16ms)
+ GET /api/vigilance/readiness 200 in 623ms (next.js: 19ms, application-code: 604ms)
+ GET /api/vigilance/jobs?limit=50 200 in 30ms (next.js: 5ms, application-code: 25ms)
+ GET /api/vigilance/scout 200 in 25ms (next.js: 10ms, application-code: 15ms)
+ GET /api/vigilance/readiness 200 in 588ms (next.js: 14ms, application-code: 574ms)
+ GET /api/vigilance/jobs?limit=50 200 in 25ms (next.js: 5ms, application-code: 19ms)
+ GET /api/vigilance/scout 200 in 29ms (next.js: 16ms, application-code: 13ms)
+ GET /api/vigilance/readiness 200 in 569ms (next.js: 13ms, application-code: 557ms)
+ GET /api/vigilance/jobs?limit=50 200 in 47ms (next.js: 7ms, application-code: 40ms)
+ GET /api/vigilance/scout 200 in 56ms (next.js: 21ms, application-code: 34ms)
+ GET /api/vigilance/readiness 200 in 599ms (next.js: 15ms, application-code: 584ms)
+ GET /api/vigilance/jobs?limit=50 200 in 47ms (next.js: 8ms, application-code: 39ms)
+ GET /api/vigilance/scout 200 in 56ms (next.js: 30ms, application-code: 26ms)
+ GET /api/vigilance/readiness 200 in 583ms (next.js: 19ms, application-code: 564ms)
+ GET /api/vigilance/jobs?limit=50 200 in 38ms (next.js: 6ms, application-code: 32ms)
+ GET /api/vigilance/scout 200 in 45ms (next.js: 25ms, application-code: 20ms)
+ GET /api/vigilance/readiness 200 in 578ms (next.js: 17ms, application-code: 561ms)
+
+C:\VigilanceOS>[?25h

@@ -19,6 +19,8 @@ pnpm-debug.log*
 .mastra/
 dist/
 build/
+ui/.next/
+ui/.next-dev/
 
 # IDE
 .vscode/
@@ -43,6 +45,22 @@ Dockerfile
 *.tmp
 *.temp
 .cache/
+tmp/
+*.log
+*.err.log
+*.out
+
+# Local working state
+.demo-targets/
+.uploaded-targets/
+.vigilance-work/
+.eliza/
+backend-dev.log
+backend-start.log
+backend.log
+ui-dev.log
+ui-start.log
+ui.log
 
 # Test files
 coverage/

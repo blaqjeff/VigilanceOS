@@ -965,7 +965,7 @@ function CandidateFindingCard({
   const counts = countArtifactEvidence(evidence);
 
   return (
-    <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+    <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {lead && (
@@ -1417,7 +1417,7 @@ function JobDetailPanel({
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Grounded Traces</p>
                 <div className="space-y-3">
                   {job.report.evidence.traces.map((trace, i) => (
-                    <div key={`${trace.file}-${trace.line}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div key={`${trace.file}-${trace.line}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${severityTone(trace.severityHint)}`}>
                           {trace.severityHint}
@@ -1443,7 +1443,7 @@ function JobDetailPanel({
             {job.report.evidence && job.report.evidence.reproduction.steps.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Reproduction Guidance</p>
-                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
                   {job.report.evidence.reproduction.framework && (
                     <p className="text-xs uppercase tracking-widest text-cyan-300">
                       {job.report.evidence.reproduction.framework}
@@ -1471,7 +1471,7 @@ function JobDetailPanel({
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Artifacts</p>
                 <div className="space-y-2">
                   {job.report.evidence.artifacts.map((artifact, i) => (
-                    <div key={`${artifact.type}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
+                    <div key={`${artifact.type}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full border border-white/10 bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-widest text-slate-300">
                           {artifact.type.replace(/_/g, " ")}
@@ -1691,6 +1691,7 @@ function ScoutCategoryCard({
 // ---------------------------------------------------------------------------
 
 export default function Home() {
+  const [theme, setTheme] = React.useState("jarvis");
   const [target, setTarget] = React.useState("");
   const [targetMode, setTargetMode] = React.useState<IntakeMode>("github");
   const [localIntakeMode, setLocalIntakeMode] =
@@ -1743,6 +1744,10 @@ export default function Home() {
     const id = setInterval(() => void refresh(), 3000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  React.useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
 
   React.useEffect(() => {
     if (!selectedJob) return;
@@ -2140,7 +2145,7 @@ export default function Home() {
     .slice(0, 8);
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.12),_transparent_35%),linear-gradient(180deg,#020617_0%,#020617_45%,#111827_100%)] text-gray-100 font-sans selection:bg-cyan-500 selection:text-white">
+    <div className="min-h-screen relative z-10 transition-colors duration-500 pb-16 selection:bg-[var(--color-accent-cyan)] selection:text-[var(--background)]">
 
       {/* Selected job detail */}
       {selectedJob && (
@@ -2166,7 +2171,14 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setTheme(t => t === 'jarvis' ? 'hacker' : 'jarvis')}
+              className="hidden md:block rounded-xl border border-[var(--color-panel-border)] bg-[var(--color-panel-bg)] px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-300 hover:text-[var(--color-accent-cyan)] transition shadow-lg z-50 cursor-pointer"
+            >
+              {theme === 'jarvis' ? 'HACKER MODE' : 'JARVIS MODE'}
+            </button>
             {/* Stats badges */}
             {stats && (
               <div className="hidden md:flex items-center gap-2">
@@ -2992,7 +3004,7 @@ export default function Home() {
                 {failedJobs.slice(0, 5).map((job) => (
                   <article
                     key={job.jobId}
-                    className="rounded-2xl border border-red-500/15 bg-slate-900/70 p-4 cursor-pointer hover:border-red-500/30 transition"
+                    className="rounded-2xl border border-red-500/15 bg-slate-900/70 p-4 md:p-6 cursor-pointer hover:border-red-500/30 transition"
                     onClick={() => setSelectedJob(job)}
                   >
                     <div className="flex items-center justify-between gap-3">

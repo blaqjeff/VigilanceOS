@@ -11,6 +11,7 @@ Read this file first, then read `PROJECT_SCOPE.md`.
 - `PROJECT_SCOPE.md` is the primary source of truth for product intent, scope, priorities, tradeoffs, and quality bar.
 - `DEEP_AUDITOR_PIVOT.md` is the primary source of truth for the audit-engine pivot from the current MVP toward the deeper repo auditor.
 - `DEEP_AUDITOR_CHECKLIST.md` is the ranked implementation checklist for that pivot.
+- `UI_POLISH_HANDOFF.md` is the safe-edit guide for UI-only polish work so visual changes do not break backend/runtime behavior.
 - `VIGILANCE_REQUIREMENTS.md` is legacy challenge context only.
 
 If those documents differ, follow `PROJECT_SCOPE.md`.
@@ -75,6 +76,9 @@ The following important local/source changes were reconciled:
 - `PROJECT_SCOPE.md` exists in the main repo
 - `VIGILANCE_REQUIREMENTS.md` now points readers to `PROJECT_SCOPE.md`
 - `README.md` now documents Vigilance-OS itself instead of the generic challenge template
+- `npm run dev` is now the preferred cross-platform development entrypoint, while the old PowerShell launcher lives on as `npm run dev:stack` / `start:stack` / `stop:stack`
+- `DEPLOYMENT.md` now documents the local production-style run, Docker build path, and Nosana deployment assumptions
+- the UI now uses separate Next output directories for dev and production (`.next-dev` vs `.next`), which avoids the old Windows file-lock collisions during builds while dev is running
 
 ### Remaining runtime/integration blockers
 

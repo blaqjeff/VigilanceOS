@@ -61,6 +61,15 @@ if ($Mode -eq 'stop') {
 Stop-PortProcesses $ports | Out-Null
 Start-Sleep -Seconds 2
 
+if ($Mode -eq 'start') {
+  Write-Host 'Building backend and UI before production start...'
+  npm run build:all
+  if ($LASTEXITCODE -ne 0) {
+    Write-Error 'Build failed before stack startup.'
+    exit 1
+  }
+}
+
 $backendLog = "backend-$Mode.log"
 $uiLog = "ui-$Mode.log"
 

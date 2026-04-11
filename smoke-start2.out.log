@@ -1,0 +1,125 @@
+
+> nosana-eliza-agent@0.1.0 start
+> node ./scripts/run-stack.mjs start
+
+
+> nosana-eliza-agent@0.1.0 start:eliza
+> node ./scripts/run-eliza.mjs start
+
+
+> nosana-eliza-agent@0.1.0 start:ui
+> npm --prefix ui run start
+
+
+> ui@0.1.0 start
+> next start --hostname 0.0.0.0 --port 4001
+
+▲ Next.js 16.2.1
+- Local:         http://localhost:4001
+- Network:       http://0.0.0.0:4001
+✓ Ready in 395ms
+[vigilance][readiness] Immunefi MCP: ready - Python dependencies for the Immunefi MCP server are installed. (Python: python; Script: mcp-servers\immunefi\immunefi.py)
+[vigilance][readiness] Telegram: ready - Telegram bot token is configured.
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+[36m Info      [39m [DB] Database directory configured (dataDir=C:\VigilanceOS\.eliza\.elizadb)
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+[36m Info      [39m [DB] Running database migrations
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Plugin schemas discovered (schemasDiscovered=1, totalPlugins=1)
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m [DB] Checking for server... (serverId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [HTTP] Initializing ElizaOS
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Global ElizaOS instance set
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Global AgentServer instance set
+[36m Info      [39m [HTTP] Public health check endpoints enabled: /healthz and /health (rate limited: 100 req/min)
+[36m Info      [39m [HTTP] Configuring authentication middleware...
+[36m Info      [39m [HTTP] Serving static files (clientPath=C:\VigilanceOS\node_modules\@elizaos\server\dist\client)
+[36m Info      [39m [WS] SocketIO router initialized (agentCount=0)
+AgentServer is listening on port 3001
+[36m Info      [39m Initializing MCP plugin...
+[36m Info      [39m #Scout  [PLUGIN:SQL] plugin-sql (node) init starting
+[36m Info      [39m Initializing MCP plugin...
+[36m Info      [39m #Auditor  [PLUGIN:SQL] plugin-sql (node) init starting
+[36m Info      [39m #Reviewer  [PLUGIN:SQL] plugin-sql (node) init starting
+[36m Info      [39m #Scout  [PLUGIN:SQL] No pre-registered database adapter detected; registering adapter
+[36m Info      [39m #Auditor  [PLUGIN:SQL] No pre-registered database adapter detected; registering adapter
+[36m Info      [39m #Reviewer  [PLUGIN:SQL] No pre-registered database adapter detected; registering adapter
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
+[36m Info      [39m #Scout  [PLUGIN:SQL] Database adapter created and registered
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  load multiple .env files with { path: ['.env.local', '.env'] }
+[36m Info      [39m #Auditor  [PLUGIN:SQL] Database adapter created and registered
+[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+[36m Info      [39m #Reviewer  [PLUGIN:SQL] Database adapter created and registered
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] DatabaseMigrationService initialized
+[36m Info      [39m [PLUGIN:SQL] Starting migrations (environment=DEVELOPMENT, pluginCount=1, dryRun=false)
+[36m Info      [39m [PLUGIN:SQL] Starting migration for plugin (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] Initializing migration system
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] Migration system initialized
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m [PLUGIN:SQL] No changes detected, skipping migration (pluginName=@elizaos/plugin-sql, hash=0837c648ac972285253e7d5d2812a7a987cfb92abef8f365d07cb610985c7299)
+[36m Info      [39m [PLUGIN:SQL] Migration completed (pluginName=@elizaos/plugin-sql)
+[36m Info      [39m [PLUGIN:SQL] All migrations completed successfully (successCount=1)
+[36m Info      [39m [PLUGIN:SQL] Skipping RLS re-application (ENABLE_DATA_ISOLATION is not true)
+[36m Info      [39m #Scout  [PLUGIN:BOOTSTRAP:SERVICE:EMBEDDING] Starting embedding generation service
+[36m Info      [39m [PLUGIN:TELEGRAM] Starting Telegram bot
+[36m Info      [39m #Auditor  [PLUGIN:BOOTSTRAP:SERVICE:EMBEDDING] Starting embedding generation service
+[36m Info      [39m #Reviewer  [PLUGIN:BOOTSTRAP:SERVICE:EMBEDDING] Starting embedding generation service
+[36m Info      [39m [AGENT] Successfully registered agent with core services
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Subscribing to internal message bus
+[36m Info      [39m [AGENT] Auto-associated agent with message server (messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [AGENT] Successfully registered agent with core services
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Subscribing to internal message bus
+[36m Info      [39m [AGENT] Auto-associated agent with message server (messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [AGENT] Successfully registered agent with core services
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Subscribing to internal message bus
+[36m Info      [39m [AGENT] Auto-associated agent with message server (messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [AGENT] Started agents (count=3)
+[vigilance] start backend listening on http://127.0.0.1:3001
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Agent subscribed to servers (serverCount=1, messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Agent subscribed to servers (serverCount=1, messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Agent subscribed to servers (serverCount=1, messageServerId=00000000-0000-0000-0000-000000000000)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Fetched channels from server (messageServerId=00000000-0000-0000-0000-000000000000, channelCount=2)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Loaded valid channel IDs from servers (channelCount=2, serverCount=1)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Fetched channels from server (messageServerId=00000000-0000-0000-0000-000000000000, channelCount=2)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Loaded valid channel IDs from servers (channelCount=2, serverCount=1)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Fetched channels from server (messageServerId=00000000-0000-0000-0000-000000000000, channelCount=2)
+[36m Info      [39m [SERVICE:MESSAGE-BUS] Loaded valid channel IDs from servers (channelCount=2, serverCount=1)
+[36m Info      [39m [MCP] Connected 1/1 in 1691ms (immunefi:18)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+[36m Info      [39m [TelegramOps] Direct Telegram alert sent (chatId=1904666967)
+
+C:\VigilanceOS>

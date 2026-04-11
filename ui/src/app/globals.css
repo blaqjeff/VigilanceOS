@@ -1,28 +1,189 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Default "Dark Mode" fallback if no theme is selected */
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  
   --font-sans-stack: "Segoe UI", Arial, Helvetica, sans-serif;
   --font-mono-stack: "Cascadia Code", Consolas, "Courier New", monospace;
+  --font-hud: var(--font-sans-stack);
+  
+  --color-panel-bg: rgba(15, 23, 42, 0.7); /* slate-900/70 equivalent */
+  --color-panel-border: rgba(255, 255, 255, 0.1); /* white/10 equivalent */
+  
+  --color-accent-cyan: #06b6d4;   /* cyan-500 */
+  --color-accent-emerald: #10b981; /* emerald-500 */
+  --color-accent-fuchsia: #d946ef; /* fuchsia-500 */
+  --color-accent-amber: #f59e0b;  /* amber-500 */
+  --color-accent-red: #ef4444;    /* red-500 */
+  
+  --global-border-radius: 1rem; /* rounded-2xl */
+}
+
+/* 
+  JARVIS THEME
+  Polished space blue, cinematic volumetric glows, glassmorphism
+*/
+[data-theme="jarvis"] {
+  --background: #000a14;
+  --foreground: #ddeadf;
+  
+  --font-hud: "Rajdhani", "Segoe UI", sans-serif;
+  --font-mono-stack: "Rajdhani", monospace; /* Even mono tags look cinematic in Jarvis mode */
+  
+  --color-panel-bg: rgba(2, 10, 24, 0.65);
+  --color-panel-border: rgba(0, 210, 255, 0.4);
+  
+  --color-accent-cyan: #00e5ff;
+  --color-accent-emerald: #00ff88;
+  --color-accent-fuchsia: #ff00ea;
+  --color-accent-amber: #ffaa00;
+  --color-accent-red: #ff3333;
+  
+  --global-border-radius: 12px;
+}
+
+/*
+  HACKER THEME
+  Stark, unrounded, flat deep black, intense neon terminal styling.
+*/
+[data-theme="hacker"] {
+  --background: #000000;
+  --foreground: #ffffff;
+  
+  --font-hud: "Share Tech Mono", monospace;
+  --font-mono-stack: "Share Tech Mono", monospace;
+  --font-sans-stack: "Share Tech Mono", monospace;
+  
+  --color-panel-bg: #000000;
+  --color-panel-border: rgba(0, 255, 0, 0.5);
+  
+  --color-accent-cyan: #00ff00;    /* Force hacking colors to primary neon green */
+  --color-accent-emerald: #00ff00;
+  --color-accent-fuchsia: #00ff00;
+  --color-accent-amber: #ffff00;
+  --color-accent-red: #ff0000;
+  
+  --global-border-radius: 0px; 
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans-stack);
+  --font-sans: var(--font-hud);
   --font-mono: var(--font-mono-stack);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  
+  /* Intercept Tailwind background/border utilities */
+  --color-slate-900: var(--color-panel-bg);
+  --color-slate-950: var(--background);
+  /* Intercept primary accents */
+  --color-cyan-400: var(--color-accent-cyan);
+  --color-cyan-500: var(--color-accent-cyan);
+  --color-emerald-400: var(--color-accent-emerald);
+  --color-emerald-500: var(--color-accent-emerald);
+  --color-fuchsia-400: var(--color-accent-fuchsia);
+  --color-fuchsia-500: var(--color-accent-fuchsia);
+  --color-amber-400: var(--color-accent-amber);
+  --color-amber-500: var(--color-accent-amber);
+  --color-red-400: var(--color-accent-red);
+  --color-red-500: var(--color-accent-red);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans-stack);
+  font-family: var(--font-hud);
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+/* 
+  Global Structural Upgrades
+  We apply these structurally via CSS selectors instead of hardcoding `classNames` in page.tsx.
+*/
+
+/* 1. Global border radii overrides */
+.rounded-2xl {
+  border-radius: var(--global-border-radius) !important;
+}
+
+/* 2. Hacker Mode: Remove all backdrop blurs and box shadows */
+[data-theme="hacker"] * {
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+  border-style: dashed !important;
+}
+
+/* 
+  3. Jarvis Mode: Sci-Fi Polygons
+  Directly target <article> elements acting as cards.
+*/
+[data-theme="jarvis"] article {
+  clip-path: polygon(16px 0%, 100% 0%, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0% 100%, 0% 16px);
+  position: relative;
+  transition: clip-path 0.4s, box-shadow 0.4s, border-color 0.4s;
+  backdrop-filter: blur(24px) !important;
+  background-color: var(--color-panel-bg) !important;
+  border: 1px solid var(--color-panel-border) !important;
+}
+
+/* Holographic framing brackets for Jarvis */
+[data-theme="jarvis"] article::before, [data-theme="jarvis"] article::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--color-accent-cyan);
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity 0.3s, border-width 0.3s;
+}
+[data-theme="jarvis"] article::before {
+  top: 4px; left: 4px;
+  border-right: none; border-bottom: none;
+}
+[data-theme="jarvis"] article::after {
+  bottom: 4px; right: 4px;
+  border-left: none; border-top: none;
+}
+
+[data-theme="jarvis"] article:hover::before, [data-theme="jarvis"] article:hover::after {
+  opacity: 1;
+  border-width: 2px;
+  box-shadow: 0 0 8px var(--color-accent-cyan);
+}
+[data-theme="jarvis"] article:hover {
+  box-shadow: 0 0 30px rgba(0, 210, 255, 0.08), inset 0 0 20px rgba(0, 210, 255, 0.15) !important;
+}
+
+/*
+  Global HUD / CRT effects
+*/
+.scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0) 50%,
+    rgba(0, 0, 0, 0.1) 50%,
+    rgba(0, 0, 0, 0.1)
+  );
+  background-size: 100% 4px;
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+[data-theme="hacker"] .scanlines {
+  opacity: 0.8;
+}
+[data-theme="jarvis"] .scanlines {
+  opacity: 0.3; /* Keep soft scanlines for Jarvis */
+}
+
+/* Hide Jarvis Background in Hacker mode */
+[data-theme="hacker"] .hud-container {
+  display: none !important;
 }

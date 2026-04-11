@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import JarvisHUD from "@/components/JarvisHUD";
 
 export const metadata: Metadata = {
   title: "Vigilance-OS | Autonomous Security Pipeline",
@@ -12,8 +13,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+    <html lang="en" className="h-full antialiased" data-theme="jarvis">
+      <body className="min-h-full flex flex-col">
+        <JarvisHUD />
+        {children}
+        <div className="scanlines"></div>
+      </body>
     </html>
   );
 }

@@ -8,10 +8,17 @@ nosana:
       MODEL_NAME: "Qwen3.5-27B-AWQ-4bit"
       OPENAI_API_URL: "https://6vq2bcqphcansrs9b88ztxfs88oqy7etah2ugudytv2x.node.k8s.prd.nos.ci/v1"
       OPENAI_API_KEY: "nosana"
+      OPENAI_EMBEDDING_URL: "https://4yiccatpyxx773jtewo5ccwhw1s2hezq5pehndb6fcfq.node.k8s.prd.nos.ci/v1"
+      OPENAI_EMBEDDING_API_KEY: "nosana"
+      OPENAI_EMBEDDING_MODEL: "Qwen3-Embedding-0.6B"
+      OPENAI_EMBEDDING_DIMENSIONS: "1024"
       TELEGRAM_BOT_TOKEN: "%%SECRETS.TELEGRAM_BOT_TOKEN%%"
+      TELEGRAM_ALERT_CHAT_ID: "%%SECRETS.TELEGRAM_ALERT_CHAT_ID%%"
       NODE_ENV: "production"
       SERVER_PORT: "3001"
       AGENT_BASE_URL: "http://127.0.0.1:3001"
+      UI_PORT: "4001"
+      IMMUNEFI_PYTHON_CMD: "python3"
     expose: 4001
     command: ["npm", "run", "start"]
   compute:
