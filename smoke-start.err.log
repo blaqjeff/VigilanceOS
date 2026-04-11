@@ -40,3 +40,18 @@ Error: 409: Conflict: terminated by other getUpdates request; make sure that onl
 [1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
 [1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
 [1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected

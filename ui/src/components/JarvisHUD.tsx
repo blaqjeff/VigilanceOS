@@ -8,7 +8,7 @@ export default function JarvisHUD() {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(0,243,255,0.15)_0%,_transparent_50%)]" />
 
       {/* Main central rotating assembly - Scaled up with heavy glow */}
-      <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[1600px] h-[1600px] mix-blend-screen scale-[0.6] md:scale-[0.9] drop-shadow-[0_0_20px_rgba(0,255,255,0.2)]">
+      <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[1600px] h-[1600px] mix-blend-screen scale-[0.6] md:scale-[0.9] opacity-40 drop-shadow-[0_0_20px_rgba(0,255,255,0.15)]">
         
         {/* Core Glow */}
         <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-cyan-500/20 rounded-full blur-[80px]" />
@@ -57,12 +57,12 @@ export default function JarvisHUD() {
         </svg>
       </div>
 
-      {/* Decorative Text */}
-      <div className="absolute top-[20%] left-8 text-[10px] font-mono text-cyan-400/60 uppercase tracking-widest leading-loose drop-shadow-[0_0_5px_rgba(0,255,255,0.4)] md:left-[10%]">
-        <p>SYS.CORE.OP // <strong className="text-cyan-300">NOMINAL</strong></p>
-        <p>MEM.ALLOC // <strong className="text-cyan-300">78.4%</strong></p>
-        <p>EXT.NET // <strong className="text-cyan-300">SECURE</strong></p>
-        <p className="mt-6 animate-[pulse_2s_ease-in-out_infinite]">AWAITING.FEED...</p>
+      {/* Decorative Text - positioned at very bottom to avoid content overlap */}
+      <div className="absolute bottom-8 left-8 text-[9px] font-mono text-cyan-400/25 uppercase tracking-widest leading-loose">
+        <p>SYS.CORE.OP // <strong className="text-cyan-300/35">NOMINAL</strong></p>
+        <p>MEM.ALLOC // <strong className="text-cyan-300/35">78.4%</strong></p>
+        <p>EXT.NET // <strong className="text-cyan-300/35">SECURE</strong></p>
+        <p className="mt-4 animate-[pulse_2s_ease-in-out_infinite]">AWAITING.FEED...</p>
       </div>
       
       {/* Hex Grid Background */}

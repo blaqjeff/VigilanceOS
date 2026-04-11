@@ -284,49 +284,27 @@ const INTAKE_MODE_COPY: Record<
     label: "GitHub Repo",
     placeholder: "github.com/org/repo or owner/repo",
     helper:
-      "Best path for the hosted demo and public repos. The backend clones the repo directly.",
+      "Use this for public repositories. The backend clones the repo directly.",
     detail:
-      "Use this for the cleanest end-to-end operator flow during recording and on Nosana.",
+      "Works well for standard repository intake and hosted deployments.",
   },
   local: {
     label: "Local Folder",
-    placeholder: "C:\\VigilanceOS\\.demo-targets\\sealevel-attacks",
+    placeholder: "C:\\repos\\sealevel-attacks",
     helper:
-      "Best demo path for controlled repos you already have on disk. The local backend reads the folder directly.",
+      "Use this when the repository is already available on the same machine or host.",
     detail:
-      "Use an absolute path only. This mode is for same-machine runs, not remote hosted uploads.",
+      "Use an absolute path only when the backend is reading directly from local disk.",
   },
   immunefi: {
     label: "Immunefi Project",
     placeholder: "rootstocklabs",
     helper:
-      "Queues an Immunefi project identifier directly when you want to test project-level intake without relying on Scout refresh timing.",
+      "Queue an Immunefi project directly when you want to work from project scope.",
     detail:
-      "Current Scout/Immunefi flow is still project-level. It does not yet explode every asset, repo, or document into separate queued targets.",
+      "Project discoveries expand into child targets that can be queued selectively from the console.",
   },
 };
-
-const INTAKE_PRESETS: Array<{
-  mode: IntakeMode;
-  label: string;
-  value: string;
-}> = [
-  {
-    mode: "github",
-    label: "EVM demo repo",
-    value: "theredguild/damn-vulnerable-defi",
-  },
-  {
-    mode: "local",
-    label: "Solana demo folder",
-    value: "C:\\VigilanceOS\\.demo-targets\\sealevel-attacks",
-  },
-  {
-    mode: "local",
-    label: "EVM local folder",
-    value: "C:\\VigilanceOS\\.demo-targets\\damn-vulnerable-defi-shallow",
-  },
-];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -764,6 +742,10 @@ function scoutEventTone(event: ScoutDiscovery["lastEvent"]): string {
     default:
       return "border-slate-500/30 bg-slate-500/10 text-slate-300";
   }
+}
+
+function scoutModeLabel(mode?: ScoutWatcherSnapshot["mode"]): string {
+  return mode === "DEMO" ? "Simulated discovery" : "Live discovery";
 }
 
 function scoutDiscoveryStateTone(state: ScoutDiscovery["state"]): string {
@@ -1679,7 +1661,7 @@ function ScoutCategoryCard({
           <p className="mt-1 text-sm font-semibold text-white">{category.resourceCount}</p>
         </div>
       </div>
-      <p className="mt-3 text-[11px] leading-5 text-slate-500">
+      <p className="mt-3 text-[11px] leading-5 text-slate-500 break-words overflow-hidden">
         Queries: {category.queries.join(" | ")}
       </p>
     </article>
@@ -2218,12 +2200,12 @@ export default function Home() {
           <div className="absolute inset-y-0 right-0 w-72 bg-[radial-gradient(circle_at_center,_rgba(34,211,238,0.18),_transparent_65%)]" />
           <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
-              <p className="text-xs uppercase tracking-[0.35em] text-cyan-300">Golden Path Intake</p>
+              <p className="text-xs uppercase tracking-[0.35em] text-cyan-300">Target Intake</p>
               <h2 className="mt-3 text-2xl font-semibold text-white">
                 Submit → Approve → Audit → Review → Report
               </h2>
               <p className="mt-3 text-sm leading-6 text-slate-400">
-                Submit a target, approve it through the HITL gate, and let the auditor + reviewer pipeline produce a grounded report.
+                Submit a target, approve it, and let the audit and review pipeline produce a grounded report.
               </p>
               {needsHumanReviewJobs.length > 0 && (
                 <p className="text-xs uppercase tracking-[0.3em] text-amber-300">
@@ -2278,20 +2260,6 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              <div className="mt-4 flex flex-wrap gap-2">
-                {INTAKE_PRESETS.filter(
-                  (preset) => preset.mode === targetMode && !(targetMode === "local" && localIntakeMode === "upload")
-                ).map((preset) => (
-                  <button
-                    key={`${preset.mode}-${preset.label}`}
-                    type="button"
-                    onClick={() => setTarget(preset.value)}
-                    className="rounded-full border border-white/10 bg-slate-950/50 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-cyan-400/20 hover:text-white"
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className="flex w-full flex-col gap-3 lg:max-w-xl lg:flex-row">
@@ -2427,11 +2395,11 @@ export default function Home() {
                     {integration.state}
                   </span>
                 </div>
-                <p className="mt-4 text-sm leading-6 text-slate-300">{integration.summary}</p>
+                <p className="mt-4 text-sm leading-6 text-slate-300 break-words">{integration.summary}</p>
                 {integration.details?.length ? (
-                  <div className="mt-4 space-y-2 text-xs text-slate-500">
+                  <div className="mt-4 space-y-2 text-xs text-slate-500 overflow-hidden">
                     {integration.details.map((detail, index) => (
-                      <p key={`${integration.key}-${index}`}>{detail}</p>
+                      <p key={`${integration.key}-${index}`} className="break-all">{detail}</p>
                     ))}
                   </div>
                 ) : null}
@@ -2450,7 +2418,7 @@ export default function Home() {
         </section>
 
         {/* Operations overview */}
-        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="grid gap-6">
           <div className="space-y-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
@@ -2477,7 +2445,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <OperatorSummaryCard
                 title="Awaiting Approval"
                 count={pendingJobs.length}
@@ -2536,7 +2504,7 @@ export default function Home() {
                 <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                   <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500">Tracked</p>
                   <p className="mt-2 text-2xl font-semibold text-white">{scout?.totalTrackedTargets ?? 0}</p>
-                  <p className="mt-1 text-xs text-slate-500">{scout?.mode ?? "LIVE"} mode</p>
+                  <p className="mt-1 text-xs text-slate-500">{scoutModeLabel(scout?.mode)}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                   <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500">Runs</p>
@@ -2849,7 +2817,7 @@ export default function Home() {
                 </span>
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-400">
-                The newest state changes appear here so an operator can confirm movement through approval, audit, review, and publication without reading backend logs.
+                The newest state changes appear here so you can confirm movement through approval, audit, review, and publication without leaving the console.
               </p>
 
               {recentTransitions.length > 0 ? (
@@ -2988,7 +2956,7 @@ export default function Home() {
               ))
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
-                No targets are queued yet. Submit a repository or Immunefi identifier above to start the golden path.
+                No targets are queued yet. Submit a repository, local folder, or project above to start a review.
               </article>
             )}
 
@@ -3062,7 +3030,7 @@ export default function Home() {
               ))
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
-                Published findings will appear here after a target completes the full golden path: submit → approve → audit → review.
+                Published findings will appear here after a target completes submission, approval, audit, and review.
               </article>
             )}
 

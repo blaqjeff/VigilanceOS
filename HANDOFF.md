@@ -12,6 +12,8 @@ Read this file first, then read `PROJECT_SCOPE.md`.
 - `DEEP_AUDITOR_PIVOT.md` is the primary source of truth for the audit-engine pivot from the current MVP toward the deeper repo auditor.
 - `DEEP_AUDITOR_CHECKLIST.md` is the ranked implementation checklist for that pivot.
 - `UI_POLISH_HANDOFF.md` is the safe-edit guide for UI-only polish work so visual changes do not break backend/runtime behavior.
+- `DEMO_SCRIPT.md` is the recommended recording flow for the final submission video.
+- `SUBMISSION_CHECKLIST.md` is the final submission-day checklist aligned with the challenge requirements.
 - `VIGILANCE_REQUIREMENTS.md` is legacy challenge context only.
 
 If those documents differ, follow `PROJECT_SCOPE.md`.

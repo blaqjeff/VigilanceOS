@@ -53,3 +53,108 @@ https://react.dev/link/hydration-mismatch
                           >
                   ...
  
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+[browser] A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:
+
+- A server/client branch `if (typeof window !== 'undefined')`.
+- Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+- Date formatting in a user's locale which doesn't match the server.
+- External changing data without sending a snapshot of it along with the HTML.
+- Invalid HTML tag nesting.
+
+It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+
+https://react.dev/link/hydration-mismatch
+
+  ...
+    <HotReload globalError={[...]} webSocket={WebSocket} staticIndicatorState={{pathname:null, ...}}>
+      <AppDevOverlayErrorBoundary globalError={[...]}>
+        <ReplaySsrOnlyErrors>
+        <DevRootHTTPAccessFallbackBoundary>
+          <HTTPAccessFallbackBoundary notFound={<NotAllowedRootHTTPFallbackError>}>
+            <HTTPAccessFallbackErrorBoundary pathname="/" notFound={<NotAllowedRootHTTPFallbackError>} ...>
+              <RedirectBoundary>
+                <RedirectErrorBoundary router={{...}}>
+                  <Head>
+                  <__next_root_layout_boundary__>
+                    <SegmentViewNode type="layout" pagePath="layout.tsx">
+                      <SegmentTrieNode>
+                      <link>
+                      <script>
+                      <script>
+                      <RootLayout>
+                        <html lang="en" className="h-full ant..." data-theme="jarvis">
+                          <body
+                            className="min-h-full flex flex-col"
+-                           cz-shortcut-listen="true"
+-                           data-new-gr-c-s-check-loaded="14.1282.0"
+-                           data-gr-ext-installed=""
+                          >
+                  ...
+ 
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[browser] Uncaught ReferenceError: INTAKE_PRESETS is not defined
+    at Home (src/app/page.tsx:2264:18)
+    at Set.forEach (<anonymous>)
+  2262 |               )}
+  2263 |               <div className="mt-4 flex flex-wrap gap-2">
+> 2264 |                 {INTAKE_PRESETS.filter(
+       |                  ^
+  2265 |                   (preset) => preset.mode === targetMode && !(targetMode === "local" && ...
+  2266 |                 ).map((preset) => (
+  2267 |                   <button
+[1m[30m[43m Warn      [49m[39m[22m Ping failed: immunefi (error=Ping timeout, serverName=immunefi)
+[1m[30m[43m Warn      [49m[39m[22m Ping failures exceeded for immunefi, disconnecting and attempting reconnect.
+[1m[97m[41m Error     [49m[39m[22m [ScoutWatcher] Refresh failed: Not connected
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+[browser] A tree hydrated but some attributes of the server rendered HTML didn't match the client properties. This won't be patched up. This can happen if a SSR-ed Client Component used:
+
+- A server/client branch `if (typeof window !== 'undefined')`.
+- Variable input such as `Date.now()` or `Math.random()` which changes each time it's called.
+- Date formatting in a user's locale which doesn't match the server.
+- External changing data without sending a snapshot of it along with the HTML.
+- Invalid HTML tag nesting.
+
+It can also happen if the client has a browser extension installed which messes with the HTML before React loaded.
+
+https://react.dev/link/hydration-mismatch
+
+  ...
+    <HotReload globalError={[...]} webSocket={WebSocket} staticIndicatorState={{pathname:null, ...}}>
+      <AppDevOverlayErrorBoundary globalError={[...]}>
+        <ReplaySsrOnlyErrors>
+        <DevRootHTTPAccessFallbackBoundary>
+          <HTTPAccessFallbackBoundary notFound={<NotAllowedRootHTTPFallbackError>}>
+            <HTTPAccessFallbackErrorBoundary pathname="/" notFound={<NotAllowedRootHTTPFallbackError>} ...>
+              <RedirectBoundary>
+                <RedirectErrorBoundary router={{...}}>
+                  <Head>
+                  <__next_root_layout_boundary__>
+                    <SegmentViewNode type="layout" pagePath="layout.tsx">
+                      <SegmentTrieNode>
+                      <link>
+                      <script>
+                      <script>
+                      <RootLayout>
+                        <html lang="en" className="h-full ant..." data-theme="jarvis">
+                          <body
+                            className="min-h-full flex flex-col"
+-                           cz-shortcut-listen="true"
+                          >
+                  ...
+ 
