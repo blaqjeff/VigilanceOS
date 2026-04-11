@@ -1,18 +1,18 @@
 # Deployment Guide
 
-Status: Practical deployment notes for local production-style runs and Nosana submission
+Status: Practical deployment notes for local production-style runs, Docker usage, and Nosana submission
 
 ## 1. Local Production-Style Run
 
 Build everything first:
 
-```powershell
+```bash
 npm run build:all
 ```
 
 Then start the full stack:
 
-```powershell
+```bash
 npm run start
 ```
 
@@ -23,7 +23,7 @@ That launches:
 
 If you are on Windows and want the helper that also performs port cleanup and startup checks, you can use:
 
-```powershell
+```bash
 npm run start:stack
 ```
 
@@ -31,35 +31,35 @@ npm run start:stack
 
 Preferred portable dev command:
 
-```powershell
+```bash
 npm run dev
 ```
 
 Optional Windows helper:
 
-```powershell
+```bash
 npm run dev:stack
 ```
 
 Stop the stack with:
 
-```powershell
+```bash
 npm run stop
 ```
 
 ## 3. Container Build
 
-The repo ships with a root multi-stage [Dockerfile](/C:/VigilanceOS/Dockerfile).
+The repo ships with a root multi-stage [`Dockerfile`](Dockerfile).
 
 Example local build:
 
-```powershell
+```bash
 docker build -t vigilance-os:latest .
 ```
 
 Example local run:
 
-```powershell
+```bash
 docker run --rm -p 4001:4001 -p 3001:3001 --env-file .env vigilance-os:latest
 ```
 
@@ -71,11 +71,42 @@ The container:
 - exposes both `3001` and `4001`
 - uses a healthcheck based on backend and UI reachability
 
-## 4. Nosana Deployment
+## 4. How Environment Variables Are Handled
+
+### Local development
+
+- create a root `.env` from [`.env.example`](.env.example)
+- `npm run dev` and `npm run start` use those values at runtime
+
+### Docker builds
+
+- the real `.env` file is **not baked into the image**
+- `.dockerignore` excludes `.env`, `.env.*`, and other local-only environment files from the build context
+- this keeps secrets out of the built container image
+
+### Local container runs
+
+- pass environment variables at runtime with `--env-file .env`
+- you can also override individual values with `-e NAME=value`
+
+### Nosana deployments
+
+- Nosana does not rely on your local `.env` file
+- values come from the `env` block in [`nosana.yaml`](nosana.yaml)
+- secret values should be supplied with `%%SECRETS.NAME%%` placeholders
+
+Current secret-backed values in the manifest:
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALERT_CHAT_ID`
+
+Non-secret challenge defaults such as public model endpoints are currently set directly in the manifest for convenience. If you want a more portable deployment, you can also move the `OPENAI_*` and embedding values into deployment-time variables or secrets.
+
+## 5. Nosana Deployment
 
 The repo includes a starter manifest:
 
-- [nosana.yaml](/C:/VigilanceOS/nosana.yaml)
+- [`nosana.yaml`](nosana.yaml)
 
 Current assumptions:
 
@@ -111,19 +142,19 @@ For the challenge, the cleanest story is:
 3. expose the UI on `4001`
 4. keep the backend internal and proxied through the UI routes
 
-## 5. Self-Hosted Model Option
+## 6. Self-Hosted Model Option
 
 If the shared hosted model endpoint is unavailable, use the self-host runbook:
 
-- [nos_job_def/SELF_HOST_MODEL_RUNBOOK.md](/C:/VigilanceOS/nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
+- [`nos_job_def/SELF_HOST_MODEL_RUNBOOK.md`](nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
 
 That path is intended for temporary recovery and live demo continuity, not as the only supported model path.
 
-## 6. Pre-Submission Verification
+## 7. Pre-Submission Verification
 
 Before final submission, verify:
 
-```powershell
+```bash
 bunx tsc -p tsconfig.json
 bun run build
 bun run build:ui
@@ -138,7 +169,7 @@ And verify these product behaviors from the deployed UI:
 5. audit results appear with multiple findings
 6. Scout project cards and child target queueing work
 
-## 7. Notes
+## 8. Notes
 
 - `npm run dev` is now the preferred cross-platform development command.
 - `npm run start` is the preferred cross-platform production-style run command.

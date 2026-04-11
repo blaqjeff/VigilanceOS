@@ -931,23 +931,34 @@ function LifecycleBar({ job }: { job: AuditJob }) {
 function CandidateFindingCard({
   candidate,
   lead = false,
+  selected = false,
   review,
   leadLabel,
   busy = false,
   onResolve,
+  onOpen,
 }: {
   candidate: AuditFindingCandidate;
   lead?: boolean;
+  selected?: boolean;
   review?: ReviewerVerdict;
   leadLabel?: string | null;
   busy?: boolean;
   onResolve?: (action: "publish" | "discard") => void;
+  onOpen?: () => void;
 }) {
   const evidence = candidate.evidence;
   const counts = countArtifactEvidence(evidence);
 
   return (
-    <article className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
+    <article
+      className={`rounded-2xl border bg-slate-900/70 p-4 md:p-6 ${
+        selected
+          ? "border-cyan-400/40 ring-1 ring-cyan-400/30"
+          : "border-white/10"
+      } ${onOpen ? "cursor-pointer transition hover:border-cyan-400/20" : ""}`}
+      onClick={onOpen}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {lead && (
@@ -1042,7 +1053,10 @@ function CandidateFindingCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => onResolve("publish")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onResolve("publish");
+              }}
               className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Publish
@@ -1050,7 +1064,10 @@ function CandidateFindingCard({
             <button
               type="button"
               disabled={busy}
-              onClick={() => onResolve("discard")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onResolve("discard");
+              }}
               className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-200 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Discard
@@ -1087,7 +1104,7 @@ function FindingResultCard({
   onOpen,
 }: {
   entry: FindingFeedEntry;
-  onOpen: (job: AuditJob) => void;
+  onOpen: (entry: FindingFeedEntry) => void;
 }) {
   const { job, candidate, verdict, isLead } = entry;
   const leadLabel = leadFindingLabel(entry);
@@ -1096,7 +1113,7 @@ function FindingResultCard({
   return (
     <article
       className="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-lg shadow-slate-950/30 cursor-pointer transition hover:border-cyan-400/20"
-      onClick={() => onOpen(job)}
+      onClick={() => onOpen(entry)}
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -1161,14 +1178,18 @@ function FindingResultCard({
 
 function JobDetailPanel({
   job,
+  selectedCandidateId,
   busy = false,
   onClose,
+  onSelectCandidate,
   onResolveFinding,
   onArchive,
 }: {
   job: AuditJob;
+  selectedCandidateId?: string | null;
   busy?: boolean;
   onClose: () => void;
+  onSelectCandidate?: (candidateId: string | null) => void;
   onResolveFinding?: (
     candidate: AuditFindingCandidate,
     action: "publish" | "discard"
@@ -1182,6 +1203,44 @@ function JobDetailPanel({
         ? [fallbackLeadCandidate(job.report)!]
         : [];
   const lead = leadCandidate(job.report) ?? fallbackLeadCandidate(job.report);
+  const activeCandidate =
+    candidates.find((candidate) => candidate.candidateId === selectedCandidateId) ??
+    lead;
+  const activeIsLead = Boolean(
+    activeCandidate &&
+      lead &&
+      activeCandidate.candidateId === lead.candidateId
+  );
+  const activeReview =
+    activeCandidate?.review ??
+    (activeIsLead ? job.verdict : undefined);
+  const activeEvidence =
+    activeCandidate?.evidence ??
+    (activeIsLead ? job.report?.evidence : undefined);
+  const activeImpact =
+    activeCandidate?.impact ??
+    (activeIsLead ? job.report?.impact : undefined);
+  const activeWhyFlagged =
+    activeCandidate?.whyFlagged?.length
+      ? activeCandidate.whyFlagged
+      : activeIsLead
+        ? (job.report?.whyFlagged ?? [])
+        : [];
+  const activeAffectedSurface =
+    activeCandidate?.affectedSurface?.length
+      ? activeCandidate.affectedSurface
+      : activeIsLead
+        ? (job.report?.affectedSurface ?? [])
+        : [];
+  const activeRecommendations =
+    activeCandidate?.recommendations?.length
+      ? activeCandidate.recommendations
+      : activeIsLead
+        ? (job.report?.recommendations ?? [])
+        : [];
+  const activePoc =
+    activeCandidate?.poc ??
+    (activeIsLead ? job.report?.poc : undefined);
   const drivers = outcomeDrivers(job);
   const counts = findingCounts(job.report);
   const canArchive = ["published", "needs_human_review", "discarded", "failed"].includes(job.state);
@@ -1258,56 +1317,113 @@ function JobDetailPanel({
         {job.report && (
           <div className="mt-6 space-y-4">
             <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-lg font-semibold text-white">Lead Finding Summary</h3>
-              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${severityTone(job.report.severity)}`}>
-                {job.report.severity}
-              </span>
-              {lead?.origin && (
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${originTone(lead.origin)}`}>
-                  {originLabel(lead.origin)}
+              <h3 className="text-lg font-semibold text-white">
+                {activeIsLead ? "Lead Finding Summary" : "Finding Summary"}
+              </h3>
+              {activeCandidate && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${severityTone(activeCandidate.severity)}`}>
+                  {activeCandidate.severity}
+                </span>
+              )}
+              {!activeIsLead && (
+                <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
+                  selected finding
+                </span>
+              )}
+              {activeCandidate?.candidateId && activeCandidate.candidateId === job.report?.leadCandidateId && (
+                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-cyan-300">
+                  lead finding
+                </span>
+              )}
+              {activeCandidate?.origin && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${originTone(activeCandidate.origin)}`}>
+                  {originLabel(activeCandidate.origin)}
                 </span>
               )}
               <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
-                {candidateCount(job.report)} candidate{candidateCount(job.report) === 1 ? "" : "s"}
+                {candidateCount(job.report)} finding{candidateCount(job.report) === 1 ? "" : "s"}
               </span>
               <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
                 {counts?.published ?? 0} publish | {counts?.needsHumanReview ?? 0} review | {counts?.discarded ?? 0} discard
               </span>
-              {typeof job.report.confidence === "number" && (
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${confidenceTone(job.report.confidence)}`}>
-                  auditor {formatPercent(job.report.confidence)}
+              {typeof activeCandidate?.confidence === "number" && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${confidenceTone(activeCandidate.confidence)}`}>
+                  auditor {formatPercent(activeCandidate.confidence)}
                 </span>
               )}
-              {job.report.evidence && (
+              {activeReview && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${verdictTone(activeReview.verdict)}`}>
+                  {activeReview.verdict.replace(/_/g, " ")}
+                </span>
+              )}
+              {typeof activeReview?.confidence === "number" && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${confidenceTone(activeReview.confidence)}`}>
+                  reviewer {formatPercent(activeReview.confidence)}
+                </span>
+              )}
+              {activeEvidence && (
                 <>
-                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${proofTone(job.report.evidence.proofLevel)}`}>
-                    {proofLabel(job.report.evidence.proofLevel)}
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${proofTone(activeEvidence.proofLevel)}`}>
+                    {proofLabel(activeEvidence.proofLevel)}
                   </span>
                   <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-widest ${
-                    job.report.evidence.meetsSeverityBar
+                    activeEvidence.meetsSeverityBar
                       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                       : "border-red-500/30 bg-red-500/10 text-red-300"
                   }`}>
-                    {job.report.evidence.meetsSeverityBar ? "meets evidence bar" : "below evidence bar"}
+                    {activeEvidence.meetsSeverityBar ? "meets evidence bar" : "below evidence bar"}
                   </span>
                 </>
               )}
             </div>
-            <h4 className="text-base font-medium text-slate-200">{job.report.title}</h4>
-            <p className="text-sm leading-6 text-slate-400">{job.report.description}</p>
+            <h4 className="text-base font-medium text-slate-200">
+              {activeCandidate?.title ?? job.report.title}
+            </h4>
+            <p className="text-sm leading-6 text-slate-400">
+              {activeCandidate?.description ?? job.report.description}
+            </p>
 
-            {job.report.impact && (
+            {activeReview?.rationale && (
               <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
-                <p className="text-xs uppercase tracking-widest text-slate-500">Impact</p>
-                <p className="mt-2 text-sm leading-6 text-slate-300">{job.report.impact}</p>
+                <p className="text-xs uppercase tracking-widest text-slate-500">Finding Review Outcome</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{activeReview.rationale}</p>
+                {activeReview.verdict === "needs_human_review" &&
+                  activeCandidate &&
+                  onResolveFinding && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onResolveFinding(activeCandidate, "publish")}
+                        className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Publish
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onResolveFinding(activeCandidate, "discard")}
+                        className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-red-200 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  )}
               </div>
             )}
 
-            {job.report.whyFlagged && job.report.whyFlagged.length > 0 && (
+            {activeImpact && (
+              <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
+                <p className="text-xs uppercase tracking-widest text-slate-500">Impact</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{activeImpact}</p>
+              </div>
+            )}
+
+            {activeWhyFlagged.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Why Flagged</p>
                 <ul className="space-y-2 text-sm text-slate-400">
-                  {job.report.whyFlagged.map((reason, i) => (
+                  {activeWhyFlagged.map((reason, i) => (
                     <li key={i} className="flex gap-2">
                       <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400/50" />
                       {reason}
@@ -1331,15 +1447,15 @@ function JobDetailPanel({
               </div>
             )}
 
-            {job.report.evidence && (
+            {activeEvidence && (
               <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-xs uppercase tracking-widest text-slate-500">Evidence Summary</p>
-                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${proofTone(job.report.evidence.proofLevel)}`}>
-                    {proofLabel(job.report.evidence.proofLevel)}
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${proofTone(activeEvidence.proofLevel)}`}>
+                    {proofLabel(activeEvidence.proofLevel)}
                   </span>
                 </div>
-                <p className="mt-2 text-sm leading-6 text-slate-300">{job.report.evidence.summary}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{activeEvidence.summary}</p>
               </div>
             )}
 
@@ -1349,7 +1465,7 @@ function JobDetailPanel({
                   <div>
                     <p className="text-xs uppercase tracking-widest text-slate-500">Candidate Findings</p>
                     <p className="mt-1 text-sm text-slate-400">
-                      Ranked candidates preserved by the auditor before the reviewer decided the final job outcome.
+                      Select any finding below to inspect its own evidence, review outcome, and analyst actions.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-slate-900 px-2.5 py-1 text-xs font-semibold uppercase tracking-widest text-slate-300">
@@ -1368,6 +1484,7 @@ function JobDetailPanel({
                     <CandidateFindingCard
                       key={candidate.candidateId ?? `${candidate.title}-${index}`}
                       candidate={candidate}
+                      selected={candidate.candidateId === activeCandidate?.candidateId}
                       lead={candidate.candidateId === job.report?.leadCandidateId || (!job.report?.leadCandidateId && index === 0)}
                       leadLabel={
                         (candidate.candidateId === job.report?.leadCandidateId || (!job.report?.leadCandidateId && index === 0))
@@ -1382,6 +1499,11 @@ function JobDetailPanel({
                       }
                       review={candidate.review ?? (candidate.candidateId === job.report?.leadCandidateId ? job.verdict : undefined)}
                       busy={busy}
+                      onOpen={
+                        onSelectCandidate
+                          ? () => onSelectCandidate(candidate.candidateId)
+                          : undefined
+                      }
                       onResolve={
                         onResolveFinding &&
                         (candidate.review ?? job.verdict)?.verdict === "needs_human_review"
@@ -1394,11 +1516,11 @@ function JobDetailPanel({
               </div>
             )}
 
-            {job.report.evidence && job.report.evidence.traces.length > 0 && (
+            {activeEvidence && activeEvidence.traces.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Grounded Traces</p>
                 <div className="space-y-3">
-                  {job.report.evidence.traces.map((trace, i) => (
+                  {activeEvidence.traces.map((trace, i) => (
                     <div key={`${trace.file}-${trace.line}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${severityTone(trace.severityHint)}`}>
@@ -1422,37 +1544,37 @@ function JobDetailPanel({
               </div>
             )}
 
-            {job.report.evidence && job.report.evidence.reproduction.steps.length > 0 && (
+            {activeEvidence && activeEvidence.reproduction.steps.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Reproduction Guidance</p>
                 <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
-                  {job.report.evidence.reproduction.framework && (
+                  {activeEvidence.reproduction.framework && (
                     <p className="text-xs uppercase tracking-widest text-cyan-300">
-                      {job.report.evidence.reproduction.framework}
+                      {activeEvidence.reproduction.framework}
                     </p>
                   )}
                   <ul className="mt-2 space-y-2 text-sm text-slate-400">
-                    {job.report.evidence.reproduction.steps.map((step, i) => (
+                    {activeEvidence.reproduction.steps.map((step, i) => (
                       <li key={i} className="flex gap-2">
                         <span className="mt-0.5 text-cyan-400">{i + 1}.</span>
                         <span>{step}</span>
                       </li>
                     ))}
                   </ul>
-                  {job.report.evidence.reproduction.notes && (
+                  {activeEvidence.reproduction.notes && (
                     <p className="mt-3 text-xs leading-5 text-slate-500">
-                      {job.report.evidence.reproduction.notes}
+                      {activeEvidence.reproduction.notes}
                     </p>
                   )}
                 </div>
               </div>
             )}
 
-            {job.report.evidence && job.report.evidence.artifacts.length > 0 && (
+            {activeEvidence && activeEvidence.artifacts.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Artifacts</p>
                 <div className="space-y-2">
-                  {job.report.evidence.artifacts.map((artifact, i) => (
+                  {activeEvidence.artifacts.map((artifact, i) => (
                     <div key={`${artifact.type}-${i}`} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 md:p-6">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full border border-white/10 bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-widest text-slate-300">
@@ -1470,11 +1592,11 @@ function JobDetailPanel({
               </div>
             )}
 
-            {job.report.affectedSurface && job.report.affectedSurface.length > 0 && (
+            {activeAffectedSurface.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Affected Surface</p>
                 <div className="flex flex-wrap gap-2">
-                  {job.report.affectedSurface.map((s, i) => (
+                  {activeAffectedSurface.map((s, i) => (
                     <span key={i} className="rounded-lg border border-white/10 bg-slate-800 px-2 py-1 text-xs text-slate-300">
                       {s}
                     </span>
@@ -1483,11 +1605,11 @@ function JobDetailPanel({
               </div>
             )}
 
-            {job.report.recommendations && job.report.recommendations.length > 0 && (
+            {activeRecommendations.length > 0 && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">Recommendations</p>
                 <ul className="space-y-2 text-sm text-slate-400">
-                  {job.report.recommendations.map((r, i) => (
+                  {activeRecommendations.map((r, i) => (
                     <li key={i} className="flex gap-2">
                       <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-cyan-400/50" />
                       {r}
@@ -1497,13 +1619,13 @@ function JobDetailPanel({
               </div>
             )}
 
-            {job.report.poc?.text && (
+            {activePoc?.text && (
               <div>
                 <p className="text-xs uppercase tracking-widest text-slate-500 mb-2">
-                  PoC ({job.report.poc.framework})
+                  PoC ({activePoc.framework})
                 </p>
                 <pre className="overflow-x-auto rounded-xl border border-white/5 bg-slate-900 p-4 text-xs leading-5 text-slate-300 font-mono">
-                  {job.report.poc.text}
+                  {activePoc.text}
                 </pre>
               </div>
             )}
@@ -1692,6 +1814,7 @@ export default function Home() {
   const [scoutQueueBusyKey, setScoutQueueBusyKey] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [selectedJob, setSelectedJob] = React.useState<AuditJob | null>(null);
+  const [selectedCandidateId, setSelectedCandidateId] = React.useState<string | null>(null);
   const [findingRankMode, setFindingRankMode] =
     React.useState<FindingRankMode>("severity_then_confidence");
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
@@ -1748,6 +1871,20 @@ export default function Home() {
       }
     }
   }, [jobs, selectedJob]);
+
+  function openJobDetail(job: AuditJob, candidateId?: string | null) {
+    setSelectedJob(job);
+    setSelectedCandidateId(candidateId ?? null);
+  }
+
+  function openFindingDetail(entry: FindingFeedEntry) {
+    openJobDetail(entry.job, entry.candidate.candidateId);
+  }
+
+  function closeJobDetail() {
+    setSelectedJob(null);
+    setSelectedCandidateId(null);
+  }
 
   // ---- Actions ----
 
@@ -1972,7 +2109,7 @@ export default function Home() {
       if (!res.ok) {
         setActionError(payload?.error ?? "Archive failed.");
       } else {
-        setSelectedJob(null);
+        closeJobDetail();
       }
       await refresh();
     } finally {
@@ -2053,7 +2190,7 @@ export default function Home() {
           ...(payload?.data?.existingJobs ?? []),
         ];
         if (queuedJobs.length > 0) {
-          setSelectedJob(queuedJobs[0]);
+          openJobDetail(queuedJobs[0]);
         }
         if (options.queueAll) {
           setScoutChildSelection(discovery.projectKey, []);
@@ -2133,8 +2270,10 @@ export default function Home() {
       {selectedJob && (
         <JobDetailPanel
           job={selectedJob}
+          selectedCandidateId={selectedCandidateId}
           busy={busy}
-          onClose={() => setSelectedJob(null)}
+          onClose={closeJobDetail}
+          onSelectCandidate={setSelectedCandidateId}
           onResolveFinding={(candidate, action) => void resolveFinding(selectedJob, candidate, action)}
           onArchive={() => void archiveJob(selectedJob)}
         />
@@ -2453,7 +2592,7 @@ export default function Home() {
                 description="Targets paused at the human approval gate before deeper audit can begin."
                 jobs={pendingJobs}
                 emptyLabel="No targets need approval"
-                onSelect={setSelectedJob}
+            onSelect={openJobDetail}
               />
               <OperatorSummaryCard
                 title="Approved To Run"
@@ -2462,7 +2601,7 @@ export default function Home() {
                 description="Targets already approved and ready for the next audit run when the model is available."
                 jobs={approvedJobs}
                 emptyLabel="No approved targets are waiting"
-                onSelect={setSelectedJob}
+            onSelect={openJobDetail}
               />
               <OperatorSummaryCard
                 title="Active Analysis"
@@ -2471,7 +2610,7 @@ export default function Home() {
                 description="Jobs currently scanning or reviewing with live pipeline visibility."
                 jobs={activeJobs}
                 emptyLabel="No active audits right now"
-                onSelect={setSelectedJob}
+            onSelect={openJobDetail}
               />
               <OperatorSummaryCard
                 title="Needs Human Review"
@@ -2480,7 +2619,7 @@ export default function Home() {
                 description="Grounded findings the reviewer preserved for analyst judgment instead of auto-publishing."
                 jobs={needsHumanReviewJobs}
                 emptyLabel="No findings are waiting on analyst review"
-                onSelect={setSelectedJob}
+            onSelect={openJobDetail}
               />
             </div>
           </div>
@@ -2780,7 +2919,7 @@ export default function Home() {
                                           )}
                                           {linkedJob && (
                                             <button
-                                              onClick={() => setSelectedJob(linkedJob)}
+                                              onClick={() => openJobDetail(linkedJob)}
                                               className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-1.5 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400/30 hover:text-white"
                                             >
                                               Open job
@@ -2825,7 +2964,7 @@ export default function Home() {
                   {recentTransitions.map(({ key, job, transition }) => (
                     <button
                       key={key}
-                      onClick={() => setSelectedJob(job)}
+                      onClick={() => openJobDetail(job)}
                       className="w-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-left transition hover:border-cyan-400/20"
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -2875,7 +3014,7 @@ export default function Home() {
                 <article
                   key={job.jobId}
                   className={`rounded-2xl border border-white/10 bg-slate-900/70 p-5 transition hover:border-cyan-400/20 cursor-pointer ${activeStateAnimation(job.state)}`}
-                  onClick={() => setSelectedJob(job)}
+                  onClick={() => openJobDetail(job)}
                 >
                   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="space-y-2 flex-1 min-w-0">
@@ -2973,7 +3112,7 @@ export default function Home() {
                   <article
                     key={job.jobId}
                     className="rounded-2xl border border-red-500/15 bg-slate-900/70 p-4 md:p-6 cursor-pointer hover:border-red-500/30 transition"
-                    onClick={() => setSelectedJob(job)}
+                    onClick={() => openJobDetail(job)}
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -3026,7 +3165,7 @@ export default function Home() {
 
             {publishedFindings.length > 0 ? (
               publishedFindings.slice(0, 10).map((entry) => (
-                <FindingResultCard key={entry.key} entry={entry} onOpen={setSelectedJob} />
+                <FindingResultCard key={entry.key} entry={entry} onOpen={openFindingDetail} />
               ))
             ) : (
               <article className="rounded-2xl border border-dashed border-white/10 bg-slate-900/50 p-6 text-sm text-slate-400">
@@ -3043,7 +3182,7 @@ export default function Home() {
                   </span>
                 </div>
                 {needsHumanReviewFindings.slice(0, 8).map((entry) => (
-                  <FindingResultCard key={entry.key} entry={entry} onOpen={setSelectedJob} />
+                  <FindingResultCard key={entry.key} entry={entry} onOpen={openFindingDetail} />
                 ))}
               </>
             )}
@@ -3057,7 +3196,7 @@ export default function Home() {
                   </span>
                 </div>
                 {discardedFindings.slice(0, 6).map((entry) => (
-                  <FindingResultCard key={entry.key} entry={entry} onOpen={setSelectedJob} />
+                  <FindingResultCard key={entry.key} entry={entry} onOpen={openFindingDetail} />
                 ))}
               </>
             )}
