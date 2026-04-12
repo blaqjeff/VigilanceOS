@@ -100,3 +100,34 @@ characters/*.runtime.json
 
 # Ingestion work directory
 .vigilance-work/
+
+# Private workspace / internal-only files
+.cursor/
+.demo-targets/
+.uploaded-targets/
+ui/.uploaded-targets/
+tmp/
+nosana_openapi.json
+debug_agents.js
+tmp_probe_4000.js
+tmp_test_api.js
+trigger_test.js
+backend*.log
+ui*.log
+eliza_*.log
+full_dev_fixed.log
+out.log
+pipeline.log
+smoke-*.log
+*.err.log
+*.out.log
+
+# Internal planning / handoff docs
+HANDOFF.md
+PROJECT_SCOPE.md
+DEEP_AUDITOR_CHECKLIST.md
+DEEP_AUDITOR_PIVOT.md
+UI_POLISH_HANDOFF.md
+DEMO_SCRIPT.md
+SUBMISSION_CHECKLIST.md
+VIGILANCE_REQUIREMENTS.md
