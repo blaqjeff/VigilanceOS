@@ -241,7 +241,7 @@ Current usage patterns:
 Deployment and self-hosting references:
 
 - [`DEPLOYMENT.md`](DEPLOYMENT.md)
-- [`nos_job_def/SELF_HOST_MODEL_RUNBOOK.md`](nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
+- [`nos_job_def/SELF_HOST_MODEL_ON_NOSANA.md`](nos_job_def/SELF_HOST_MODEL_ON_NOSANA.md)
 
 ## Readiness Model
 
@@ -268,7 +268,7 @@ src/plugins/                ElizaOS runtime plugins
 src/scout/                  Scout watcher and project discovery logic
 src/telegram/               Telegram alert helpers
 ui/                         Next.js operator console
-nos_job_def/                Nosana model deployment assets and runbooks
+nos_job_def/                Nosana model deployment templates and self-hosting guides
 scripts/                    Stack orchestration and startup scripts
 ```
 
@@ -301,7 +301,7 @@ Vigilance-OS is intentionally explicit about current limits.
 ## Additional Documentation
 
 - [`DEPLOYMENT.md`](DEPLOYMENT.md)
-- [`nos_job_def/SELF_HOST_MODEL_RUNBOOK.md`](nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
+- [`nos_job_def/SELF_HOST_MODEL_ON_NOSANA.md`](nos_job_def/SELF_HOST_MODEL_ON_NOSANA.md)
 
 ## License
 

@@ -144,11 +144,11 @@ For the challenge, the cleanest story is:
 
 ## 6. Self-Hosted Model Option
 
-If the shared hosted model endpoint is unavailable, use the self-host runbook:
+If the shared hosted model endpoint is unavailable, use the self-hosting guide:
 
-- [`nos_job_def/SELF_HOST_MODEL_RUNBOOK.md`](nos_job_def/SELF_HOST_MODEL_RUNBOOK.md)
+- [`nos_job_def/SELF_HOST_MODEL_ON_NOSANA.md`](nos_job_def/SELF_HOST_MODEL_ON_NOSANA.md)
 
-That path is intended for temporary recovery and live demo continuity, not as the only supported model path.
+That path is a supported fallback for temporary recovery, demos, and situations where you want direct control over model uptime.
 
 ## 7. Pre-Submission Verification
 
