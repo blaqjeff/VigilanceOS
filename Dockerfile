@@ -5,6 +5,7 @@ FROM node:23-slim AS base
 RUN apt-get update && apt-get install -y \
   python3 \
   python3-pip \
+  python3-venv \
   make \
   g++ \
   git \
@@ -13,11 +14,14 @@ RUN apt-get update && apt-get install -y \
 
 ENV ELIZAOS_TELEMETRY_DISABLED=true
 ENV DO_NOT_TRACK=1
+ENV VIRTUAL_ENV=/opt/immunefi-venv
+ENV PATH="/opt/immunefi-venv/bin:${PATH}"
 
 WORKDIR /app
 
 COPY mcp-servers/immunefi/requirements.txt /tmp/immunefi-requirements.txt
-RUN python3 -m pip install --no-cache-dir -r /tmp/immunefi-requirements.txt
+RUN python3 -m venv "$VIRTUAL_ENV" \
+  && "$VIRTUAL_ENV/bin/pip" install --no-cache-dir -r /tmp/immunefi-requirements.txt
 
 FROM base AS deps
 
