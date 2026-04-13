@@ -48,10 +48,6 @@ FROM base AS prod-deps
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-WORKDIR /app/ui
-COPY ui/package.json ui/package-lock.json ./
-RUN npm ci --omit=dev
-
 FROM base AS runner
 
 WORKDIR /app
@@ -62,7 +58,7 @@ ENV AGENT_BASE_URL=http://127.0.0.1:3001
 ENV UI_PORT=4001
 
 COPY --from=prod-deps /app/node_modules /app/node_modules
-COPY --from=prod-deps /app/ui/node_modules /app/ui/node_modules
+COPY --from=deps /app/ui/node_modules /app/ui/node_modules
 
 COPY --from=builder /app/dist /app/dist
 COPY --from=builder /app/scripts /app/scripts
