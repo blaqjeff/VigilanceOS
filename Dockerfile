@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:23-slim AS base
+FROM node:22-slim AS base
 
 RUN apt-get update && apt-get install -y \
   python3 \
