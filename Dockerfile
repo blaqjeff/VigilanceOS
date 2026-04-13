@@ -26,7 +26,8 @@ RUN python3 -m venv "$VIRTUAL_ENV" \
 FROM base AS deps
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --omit=dev \
+  && npm install --no-save typescript@5.9.3
 
 WORKDIR /app/ui
 COPY ui/package.json ui/package-lock.json ./
