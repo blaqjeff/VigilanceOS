@@ -170,6 +170,15 @@ npm run build:all
 npm run start
 ```
 
+For a production-style local run, build first and then start with:
+
+```bash
+npm run build:all
+npm run start
+```
+
+This is also the startup path used by the Docker image and the Nosana deployment.
+
 Optional Windows helpers:
 
 ```bash
@@ -253,6 +262,8 @@ Readiness covers:
 - OpenAI-compatible model endpoint
 - Telegram
 
+A degraded model card does not necessarily mean the app deployment is down. It means the configured model endpoint failed the latest readiness probe, while the UI and other integrations may still be healthy.
+
 Relevant files:
 
 - [`src/readiness.ts`](src/readiness.ts)
@@ -277,9 +288,15 @@ scripts/                    Stack orchestration and startup scripts
 The following commands are used regularly to validate the codebase:
 
 ```bash
-bunx tsc -p tsconfig.json
-bun run build
-bun run build:ui
+npm run build
+npm run build:ui
+npm run build:all
+```
+
+For a production-style smoke test:
+
+```bash
+npm run start
 ```
 
 For day-to-day local development:

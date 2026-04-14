@@ -155,9 +155,9 @@ That path is a supported fallback for temporary recovery, demos, and situations 
 Before final submission, verify:
 
 ```bash
-bunx tsc -p tsconfig.json
-bun run build
-bun run build:ui
+npm run build
+npm run build:ui
+npm run build:all
 ```
 
 And verify these product behaviors from the deployed UI:
