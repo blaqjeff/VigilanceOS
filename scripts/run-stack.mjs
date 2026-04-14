@@ -29,13 +29,15 @@ const ui = spawnNamed("ui", uiCommand);
 const children = [backend, ui];
 
 let shuttingDown = false;
+let exitCode = 0;
 
-function terminate(signal = "SIGTERM") {
+function terminate(signal = "SIGTERM", code = 0) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
+  exitCode = code;
   for (const child of children) {
     if (!child.killed) {
       try {
@@ -44,7 +46,7 @@ function terminate(signal = "SIGTERM") {
     }
   }
 
-  setTimeout(() => process.exit(0), 250).unref();
+  setTimeout(() => process.exit(exitCode), 250).unref();
 }
 
 for (const [name, child] of [
@@ -58,7 +60,7 @@ for (const [name, child] of [
 
     const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`;
     console.error(`[${name}] exited with ${reason}. Shutting down the stack.`);
-    terminate();
+    terminate("SIGTERM", typeof code === "number" ? code : 1);
   });
 }
 
