@@ -27,6 +27,7 @@
     "@elizaos/plugin-bootstrap": "1.7.2",
     "@elizaos/plugin-mcp": "1.7.1",
     "@elizaos/plugin-openai": "1.6.0",
+    "@elizaos/server": "1.7.2",
     "@elizaos/plugin-telegram": "1.6.4",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3"
