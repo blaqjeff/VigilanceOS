@@ -109,6 +109,29 @@ function joinUrl(base: string, suffix: string): string {
   )}`;
 }
 
+const MODEL_PROBE_TIMEOUT_MS = 20_000;
+const MODEL_REFRESH_INTERVAL_MS = 30_000;
+const MODEL_TRANSIENT_GRACE_MS = 5 * 60_000;
+
+function checkedAtMs(value: string): number {
+  return Date.parse(value);
+}
+
+function isRecentSuccessfulModelReadiness(
+  integration: IntegrationReadiness | null | undefined
+): integration is IntegrationReadiness {
+  if (!integration || integration.key !== "model") {
+    return false;
+  }
+
+  if (!integration.available || integration.state !== "ready") {
+    return false;
+  }
+
+  const parsed = checkedAtMs(integration.checkedAt);
+  return Number.isFinite(parsed) && Date.now() - parsed <= MODEL_TRANSIENT_GRACE_MS;
+}
+
 function defaultIntegration(
   key: IntegrationKey,
   label: string,
@@ -218,7 +241,9 @@ export function updateIntegrationReadiness(
   );
 }
 
-export async function probeModelReadinessFromEnv(): Promise<IntegrationReadiness> {
+export async function probeModelReadinessFromEnv(
+  previous?: IntegrationReadiness
+): Promise<IntegrationReadiness> {
   const template = integrationTemplate("model");
   const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
   const apiUrl = String(
@@ -248,7 +273,7 @@ export async function probeModelReadinessFromEnv(): Promise<IntegrationReadiness
 
   const probeUrl = joinUrl(apiUrl, "models");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), MODEL_PROBE_TIMEOUT_MS);
 
   try {
     const response = await fetch(probeUrl, {
@@ -302,6 +327,25 @@ export async function probeModelReadinessFromEnv(): Promise<IntegrationReadiness
       action: "Check endpoint availability and credentials before relying on model-backed audits.",
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "AbortError" &&
+      isRecentSuccessfulModelReadiness(previous)
+    ) {
+      return buildReadinessResult({
+        ...template,
+        state: "ready",
+        available: true,
+        summary:
+          "Using the last successful model readiness check after a transient probe timeout.",
+        details: [
+          `Endpoint: ${probeUrl}`,
+          `Model: ${modelName}`,
+          `Last success: ${previous.checkedAt}`,
+        ],
+      });
+    }
+
     const summary =
       error instanceof Error ? error.message : "Unknown model readiness probe error.";
     return buildReadinessResult({
@@ -318,7 +362,18 @@ export async function probeModelReadinessFromEnv(): Promise<IntegrationReadiness
 }
 
 export async function refreshModelReadinessSnapshot(): Promise<ReadinessSnapshot> {
-  const integration = await probeModelReadinessFromEnv();
+  const current = getIntegrationReadiness("model");
+  const parsed = checkedAtMs(current.checkedAt);
+
+  if (
+    current.state !== "unknown" &&
+    Number.isFinite(parsed) &&
+    Date.now() - parsed < MODEL_REFRESH_INTERVAL_MS
+  ) {
+    return getReadinessSnapshot();
+  }
+
+  const integration = await probeModelReadinessFromEnv(current);
   return updateIntegrationReadiness("model", integration);
 }
 

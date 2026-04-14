@@ -298,7 +298,7 @@ async function diagnoseModelReadiness() {
 
   const probeUrl = joinUrl(apiUrl, "models");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 20_000);
 
   try {
     const response = await fetch(probeUrl, {
