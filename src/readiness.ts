@@ -109,8 +109,8 @@ function joinUrl(base: string, suffix: string): string {
   )}`;
 }
 
-const MODEL_PROBE_TIMEOUT_MS = 20_000;
-const MODEL_REFRESH_INTERVAL_MS = 30_000;
+const MODEL_PROBE_TIMEOUT_MS = 30_000;
+const MODEL_REFRESH_INTERVAL_MS = 60_000;
 const MODEL_TRANSIENT_GRACE_MS = 5 * 60_000;
 
 function checkedAtMs(value: string): number {
@@ -185,6 +185,7 @@ export function createDefaultReadinessSnapshot(): ReadinessSnapshot {
 }
 
 let readinessSnapshot = createDefaultReadinessSnapshot();
+let modelReadinessRefreshPromise: Promise<void> | null = null;
 
 export function createReadinessSnapshot(
   integrations: Record<IntegrationKey, IntegrationReadiness>
@@ -327,21 +328,20 @@ export async function probeModelReadinessFromEnv(
       action: "Check endpoint availability and credentials before relying on model-backed audits.",
     });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.name === "AbortError" &&
-      isRecentSuccessfulModelReadiness(previous)
-    ) {
+    if (isRecentSuccessfulModelReadiness(previous)) {
+      const errorSummary =
+        error instanceof Error ? error.message : "Unknown model readiness probe error.";
       return buildReadinessResult({
         ...template,
         state: "ready",
         available: true,
         summary:
-          "Using the last successful model readiness check after a transient probe timeout.",
+          "Using the last successful model readiness check after a transient probe failure.",
         details: [
           `Endpoint: ${probeUrl}`,
           `Model: ${modelName}`,
           `Last success: ${previous.checkedAt}`,
+          `Latest probe error: ${errorSummary}`,
         ],
       });
     }
@@ -361,6 +361,19 @@ export async function probeModelReadinessFromEnv(
   }
 }
 
+function startModelReadinessRefresh(previous: IntegrationReadiness): void {
+  if (modelReadinessRefreshPromise) {
+    return;
+  }
+
+  modelReadinessRefreshPromise = (async () => {
+    const integration = await probeModelReadinessFromEnv(previous);
+    updateIntegrationReadiness("model", integration);
+  })().finally(() => {
+    modelReadinessRefreshPromise = null;
+  });
+}
+
 export async function refreshModelReadinessSnapshot(): Promise<ReadinessSnapshot> {
   const current = getIntegrationReadiness("model");
   const parsed = checkedAtMs(current.checkedAt);
@@ -373,8 +386,13 @@ export async function refreshModelReadinessSnapshot(): Promise<ReadinessSnapshot
     return getReadinessSnapshot();
   }
 
-  const integration = await probeModelReadinessFromEnv(current);
-  return updateIntegrationReadiness("model", integration);
+  startModelReadinessRefresh(current);
+
+  if (current.state === "unknown" && modelReadinessRefreshPromise) {
+    await modelReadinessRefreshPromise;
+  }
+
+  return getReadinessSnapshot();
 }
 
 export function formatReadinessLines(snapshot: ReadinessSnapshot): string[] {

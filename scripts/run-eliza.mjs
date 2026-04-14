@@ -298,7 +298,7 @@ async function diagnoseModelReadiness() {
 
   const probeUrl = joinUrl(apiUrl, "models");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
   try {
     const response = await fetch(probeUrl, {
@@ -479,7 +479,10 @@ for (const line of formatReadinessLines(readinessSnapshot)) {
 function getBasePlugins() {
   const plugins = [bootstrapPlugin];
 
-  if (readinessSnapshot.integrations.model.available) {
+  if (
+    String(process.env.OPENAI_API_KEY || "").trim() &&
+    String(process.env.OPENAI_API_URL || process.env.OPENAI_BASE_URL || "").trim()
+  ) {
     plugins.push(openaiPlugin);
   }
 
